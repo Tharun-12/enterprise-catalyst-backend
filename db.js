@@ -5,7 +5,7 @@ const db = mysql.createPool({
   user: "root",
   password: "",
   database: "enterprise-catalyst",
-//   port: 4306,
+  port: 4306,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
