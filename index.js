@@ -7,6 +7,7 @@ const db = require("./db");
 const categoryRoutes = require("./routes/categoriesRoutes");
 const brandRoutes = require("./routes/brandRoutes");
 const productRoutes = require("./routes/productRoutes");
+const settingsRoutes = require("./routes/settingsRoutes");
 
 
 
@@ -35,6 +36,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/categories", categoryRoutes);
 app.use("/api/brands", brandRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/settings", settingsRoutes);
 
 
 // Error handling middleware
