@@ -12,7 +12,7 @@ const settingsRoutes = require("./routes/settingsRoutes");
 const adminRoutes = require('./routes/adminRoutes');
 const resetpasswordRoutes = require('./routes/resetpasswordRoutes');
 const userRoutes = require('./routes/userRoutes');
-
+const inquiryRoutes = require("./routes/inquiryRoutes");
 
 
 
@@ -23,6 +23,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
 
 // Serve static files
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -46,6 +47,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/password", resetpasswordRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api", inquiryRoutes);
 
 
 // Error handling middleware
