@@ -13,6 +13,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const resetpasswordRoutes = require('./routes/resetpasswordRoutes');
 const userRoutes = require('./routes/userRoutes');
 const inquiryRoutes = require("./routes/inquiryRoutes");
+const wishlistRoutes = require("./routes/wishlistRoutes");
 
 
 
@@ -48,6 +49,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/password", resetpasswordRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api", inquiryRoutes);
+app.use("/api", wishlistRoutes);
 
 
 // Error handling middleware
