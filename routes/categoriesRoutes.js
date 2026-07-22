@@ -1,4 +1,4 @@
-// routes/categories.js
+// routes/categoriesRoutes.js
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -7,7 +7,7 @@ const db = require("../db");
 router.get("/", async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT id, name, description, created_at, updated_at FROM categories ORDER BY name ASC"
+      "SELECT id, category_name, created_at, updated_at FROM product_categories ORDER BY category_name ASC"
     );
     res.json({
       success: true,
@@ -28,7 +28,7 @@ router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await db.query(
-      "SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ?",
+      "SELECT id, category_name, created_at, updated_at FROM product_categories WHERE id = ?",
       [id]
     );
 
@@ -56,10 +56,10 @@ router.get("/:id", async (req, res) => {
 // Create a new category
 router.post("/", async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { category_name } = req.body;
 
     // Validate required fields
-    if (!name || !name.trim()) {
+    if (!category_name || !category_name.trim()) {
       return res.status(400).json({
         success: false,
         message: "Category name is required"
@@ -68,8 +68,8 @@ router.post("/", async (req, res) => {
 
     // Check if category with same name exists
     const [existing] = await db.query(
-      "SELECT id FROM categories WHERE name = ?",
-      [name.trim()]
+      "SELECT id FROM product_categories WHERE category_name = ?",
+      [category_name.trim()]
     );
 
     if (existing.length > 0) {
@@ -81,13 +81,13 @@ router.post("/", async (req, res) => {
 
     // Insert new category
     const [result] = await db.query(
-      "INSERT INTO categories (name, description) VALUES (?, ?)",
-      [name.trim(), description?.trim() || '']
+      "INSERT INTO product_categories (category_name) VALUES (?)",
+      [category_name.trim()]
     );
 
     // Get the newly created category
     const [newCategory] = await db.query(
-      "SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ?",
+      "SELECT id, category_name, created_at, updated_at FROM product_categories WHERE id = ?",
       [result.insertId]
     );
 
@@ -110,10 +110,10 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const { category_name } = req.body;
 
     // Validate required fields
-    if (!name || !name.trim()) {
+    if (!category_name || !category_name.trim()) {
       return res.status(400).json({
         success: false,
         message: "Category name is required"
@@ -122,7 +122,7 @@ router.put("/:id", async (req, res) => {
 
     // Check if category exists
     const [category] = await db.query(
-      "SELECT id FROM categories WHERE id = ?",
+      "SELECT id FROM product_categories WHERE id = ?",
       [id]
     );
 
@@ -135,8 +135,8 @@ router.put("/:id", async (req, res) => {
 
     // Check if another category has the same name (excluding current category)
     const [existing] = await db.query(
-      "SELECT id FROM categories WHERE name = ? AND id != ?",
-      [name.trim(), id]
+      "SELECT id FROM product_categories WHERE category_name = ? AND id != ?",
+      [category_name.trim(), id]
     );
 
     if (existing.length > 0) {
@@ -148,13 +148,13 @@ router.put("/:id", async (req, res) => {
 
     // Update category
     await db.query(
-      "UPDATE categories SET name = ?, description = ? WHERE id = ?",
-      [name.trim(), description?.trim() || '', id]
+      "UPDATE product_categories SET category_name = ? WHERE id = ?",
+      [category_name.trim(), id]
     );
 
     // Get the updated category
     const [updatedCategory] = await db.query(
-      "SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ?",
+      "SELECT id, category_name, created_at, updated_at FROM product_categories WHERE id = ?",
       [id]
     );
 
@@ -180,7 +180,7 @@ router.delete("/:id", async (req, res) => {
 
     // Check if category exists
     const [category] = await db.query(
-      "SELECT id, name FROM categories WHERE id = ?",
+      "SELECT id, category_name FROM product_categories WHERE id = ?",
       [id]
     );
 
@@ -193,13 +193,13 @@ router.delete("/:id", async (req, res) => {
 
     // Delete category
     await db.query(
-      "DELETE FROM categories WHERE id = ?",
+      "DELETE FROM product_categories WHERE id = ?",
       [id]
     );
 
     res.json({
       success: true,
-      message: `Category "${category[0].name}" deleted successfully`
+      message: `Category "${category[0].category_name}" deleted successfully`
     });
   } catch (error) {
     console.error("Error deleting category:", error);

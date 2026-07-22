@@ -5,6 +5,7 @@ const path = require("path");
 const db = require("./db");
 
 const categoryRoutes = require("./routes/categoriesRoutes");
+// const variantRoutes = require("./routes/variantRoutes");
 const brandRoutes = require("./routes/brandRoutes");
 const productRoutes = require("./routes/productRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
@@ -16,7 +17,7 @@ const userRoutes = require('./routes/userRoutes');
 
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
@@ -39,6 +40,7 @@ app.get("/api/health", (req, res) => {
 // API Routes
 app.use("/api/categories", categoryRoutes);
 app.use("/api/brands", brandRoutes);
+// app.use("/api/variants", variantRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/admin", adminRoutes);
