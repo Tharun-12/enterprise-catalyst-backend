@@ -183,34 +183,46 @@ router.post("/quotations/generate", async (req, res) => {
 
 
 // =======================================================
-// Get All Quotations
+// Get All Quotations with Items
 // GET /api/quotations
 // =======================================================
 
 router.get("/quotations", async (req, res) => {
-
     try {
-
-        const [rows] = await db.execute(`
+        const [quotations] = await db.execute(`
             SELECT *
             FROM quotations
             ORDER BY id DESC
         `);
 
+        // Fetch items for each quotation
+        const quotationsWithDetails = await Promise.all(
+            quotations.map(async (quotation) => {
+                const [items] = await db.execute(
+                    `SELECT *
+                     FROM quotation_items
+                     WHERE quotation_id = ?
+                     ORDER BY id ASC`,
+                    [quotation.id]
+                );
+                return {
+                    ...quotation,
+                    details: items  // Using 'details' key for consistency with frontend
+                };
+            })
+        );
+
         res.json({
             success: true,
-            data: rows
+            data: quotationsWithDetails
         });
 
     } catch (err) {
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
 
 
@@ -267,38 +279,50 @@ router.get("/quotations/:id", async (req, res) => {
 
 
 // =======================================================
-// Get User Quotations
+// Get User Quotations with Items
 // GET /api/quotations/user/:userId
 // =======================================================
 
 router.get("/quotations/user/:userId", async (req, res) => {
-
     try {
-
         const { userId } = req.params;
 
-        const [rows] = await db.execute(
+        const [quotations] = await db.execute(
             `SELECT *
              FROM quotations
-             WHERE user_id=?
+             WHERE user_id = ?
              ORDER BY id DESC`,
             [userId]
         );
 
+        // Fetch items for each quotation
+        const quotationsWithDetails = await Promise.all(
+            quotations.map(async (quotation) => {
+                const [items] = await db.execute(
+                    `SELECT *
+                     FROM quotation_items
+                     WHERE quotation_id = ?
+                     ORDER BY id ASC`,
+                    [quotation.id]
+                );
+                return {
+                    ...quotation,
+                    details: items  // Using 'details' key for consistency with frontend
+                };
+            })
+        );
+
         res.json({
             success: true,
-            data: rows
+            data: quotationsWithDetails
         });
 
     } catch (err) {
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
 
 
