@@ -55,10 +55,11 @@ router.post("/wishlist", async (req, res) => {
 // ========================================
 // Get User Wishlist
 // ========================================
+// ========================================
+// Get User Wishlist with Variants
+// ========================================
 router.get("/wishlist/:userId", async (req, res) => {
-
     try {
-
         const { userId } = req.params;
 
         const [rows] = await db.execute(
@@ -76,14 +77,34 @@ router.get("/wishlist/:userId", async (req, res) => {
                 p.discount,
                 p.product_description,
                 p.warranty,
-                p.created_at
+                p.created_at,
+                p.updated_at,
+                c.category_name
             FROM wishlist w
-            INNER JOIN products p
-            ON w.product_id = p.id
-            WHERE w.user_id=?
+            INNER JOIN products p ON w.product_id = p.id
+            LEFT JOIN product_categories c ON p.product_category_id = c.id
+            WHERE w.user_id = ?
             ORDER BY w.created_at DESC`,
             [userId]
         );
+
+        // Get variants for each product
+        for (const product of rows) {
+            const [variants] = await db.execute(
+                `SELECT 
+                    id, 
+                    product_id, 
+                    color_name, 
+                    color_hex, 
+                    price, 
+                    stock, 
+                    image_url 
+                FROM product_variants 
+                WHERE product_id = ?`,
+                [product.id]
+            );
+            product.variants = variants;
+        }
 
         res.json({
             success: true,
@@ -91,14 +112,12 @@ router.get("/wishlist/:userId", async (req, res) => {
         });
 
     } catch (err) {
-
+        console.error('Error fetching wishlist:', err);
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
 
 
