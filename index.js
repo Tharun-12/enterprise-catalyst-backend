@@ -14,6 +14,7 @@ const resetpasswordRoutes = require('./routes/resetpasswordRoutes');
 const userRoutes = require('./routes/userRoutes');
 const inquiryRoutes = require("./routes/inquiryRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
+const quotationRoutes = require("./routes/quotationRoutes");
 
 
 
@@ -50,6 +51,7 @@ app.use("/api/password", resetpasswordRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api", inquiryRoutes);
 app.use("/api", wishlistRoutes);
+app.use("/api", quotationRoutes);
 
 
 // Error handling middleware
