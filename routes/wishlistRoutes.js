@@ -53,6 +53,103 @@ router.post("/wishlist", async (req, res) => {
 
 
 // ========================================
+// Get All Wishlist Items with User Details
+// ========================================
+router.get("/wishlist/all-with-users", async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT
+                w.id AS wishlist_id,
+                w.user_id,
+                w.created_at AS wishlist_created_at,
+                p.id AS product_id,
+                p.product_name,
+                p.product_code,
+                p.product_brand,
+                p.product_details_pdf,
+                p.price,
+                p.dimensions,
+                p.specifications,
+                p.weight,
+                p.discount,
+                p.product_description,
+                p.warranty,
+                p.created_at AS product_created_at,
+                p.updated_at AS product_updated_at,
+                c.category_name,
+                u.id AS user_id,
+                u.name AS user_name,
+                u.mobile AS user_mobile,
+                u.email AS user_email,
+                u.created_at AS user_created_at
+            FROM wishlist w
+            INNER JOIN products p ON w.product_id = p.id
+            LEFT JOIN product_categories c ON p.product_category_id = c.id
+            INNER JOIN users u ON w.user_id = u.id
+            ORDER BY w.created_at DESC`
+        );
+
+        // Get variants for each product
+        for (const item of rows) {
+            const [variants] = await db.execute(
+                `SELECT 
+                    id, 
+                    product_id, 
+                    color_name, 
+                    color_hex, 
+                    price, 
+                    stock, 
+                    image_url 
+                FROM product_variants 
+                WHERE product_id = ?`,
+                [item.product_id]
+            );
+            item.variants = variants;
+        }
+
+        // Group data by user
+        const groupedData = rows.reduce((acc, item) => {
+            const userId = item.user_id;
+            if (!acc[userId]) {
+                acc[userId] = {
+                    user: {
+                        id: item.user_id,
+                        name: item.user_name,
+                        mobile: item.user_mobile,
+                        email: item.user_email,
+                        created_at: item.user_created_at
+                    },
+                    wishlist_items: []
+                };
+            }
+            
+            // Remove user fields from item to avoid duplication
+            const { user_name, user_mobile, user_email, user_created_at, ...wishlistItem } = item;
+            acc[userId].wishlist_items.push(wishlistItem);
+            
+            return acc;
+        }, {});
+
+        const result = Object.values(groupedData);
+
+        res.json({
+            success: true,
+            total_users: result.length,
+            total_wishlist_items: rows.length,
+            data: result
+        });
+
+    } catch (err) {
+        console.error('Error fetching wishlist with users:', err);
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+});
+
+
+// ========================================
 // Get User Wishlist
 // ========================================
 // ========================================
