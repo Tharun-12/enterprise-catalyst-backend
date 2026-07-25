@@ -181,6 +181,212 @@ router.post("/quotations/generate", async (req, res) => {
 });
 
 
+// =======================================================
+// Generate Single Product Quotation
+// POST /api/quotations/single
+// =======================================================
+// =======================================================
+// Generate Single Product Quotation
+// POST /api/quotations/single
+// =======================================================
+router.post("/quotations/single", async (req, res) => {
+    const connection = await db.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        const { 
+            user_id, 
+            product_id, 
+            product_name,
+            product_code,
+            product_brand,
+            price,
+            discount = 0,
+            quantity = 1, 
+            remarks = "",
+            customer_name,
+            customer_mobile,
+            customer_email
+        } = req.body;
+
+        // Validate required fields
+        if (!user_id) {
+            return res.status(400).json({
+                success: false,
+                message: "user_id is required"
+            });
+        }
+
+        if (!product_id) {
+            return res.status(400).json({
+                success: false,
+                message: "product_id is required"
+            });
+        }
+
+        // Get User if not provided
+        let user = null;
+        if (customer_name && customer_mobile && customer_email) {
+            user = {
+                name: customer_name,
+                mobile: customer_mobile,
+                email: customer_email
+            };
+        } else {
+            const [users] = await connection.execute(
+                "SELECT * FROM users WHERE id=?",
+                [user_id]
+            );
+
+            if (users.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found"
+                });
+            }
+            user = users[0];
+        }
+
+        // Get Product if not provided
+        let product = null;
+        if (product_name && product_code && product_brand && price !== undefined) {
+            product = {
+                id: product_id,
+                product_name: product_name,
+                product_code: product_code,
+                product_brand: product_brand,
+                price: price,
+                discount: discount
+            };
+        } else {
+            const [products] = await connection.execute(
+                `SELECT 
+                    id,
+                    product_name,
+                    product_code,
+                    product_brand,
+                    price,
+                    discount
+                FROM products 
+                WHERE id=?`,
+                [product_id]
+            );
+
+            if (products.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({
+                    success: false,
+                    message: "Product not found"
+                });
+            }
+            product = products[0];
+        }
+
+        // Calculate amounts
+        const priceNum = Number(product.price);
+        const discountNum = Number(product.discount || 0);
+        const finalPrice = priceNum - discountNum;
+        const subtotal = finalPrice * quantity;
+
+        // Generate quotation number
+        const quotationNo = "QT-" + Date.now() + "-S";
+
+        // Insert quotation
+        const [quotation] = await connection.execute(
+            `INSERT INTO quotations
+            (
+                quotation_no,
+                user_id,
+                customer_name,
+                customer_mobile,
+                customer_email,
+                total_items,
+                total_amount,
+                total_discount,
+                grand_total,
+                remarks,
+                status
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            [
+                quotationNo,
+                user_id,
+                user.name,
+                user.mobile,
+                user.email,
+                1, // Single product
+                priceNum,
+                discountNum,
+                finalPrice,
+                remarks || `Quotation requested for ${product.product_name}`,
+                'Pending'
+            ]
+        );
+
+        const quotationId = quotation.insertId;
+
+        // Insert quotation item
+        await connection.execute(
+            `INSERT INTO quotation_items
+            (
+                quotation_id,
+                product_id,
+                product_name,
+                product_code,
+                brand,
+                quantity,
+                price,
+                discount,
+                final_price,
+                subtotal
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [
+                quotationId,
+                product.id,
+                product.product_name,
+                product.product_code,
+                product.product_brand,
+                quantity,
+                priceNum,
+                discountNum,
+                finalPrice,
+                subtotal
+            ]
+        );
+
+        // Remove the product from wishlist after generating quotation
+        await connection.execute(
+            "DELETE FROM wishlist WHERE user_id=? AND product_id=?",
+            [user_id, product_id]
+        );
+
+        await connection.commit();
+
+        res.json({
+            success: true,
+            message: "Quotation generated successfully.",
+            quotation_id: quotationId,
+            quotation_no: quotationNo,
+            product_name: product.product_name,
+            quantity: quantity,
+            final_price: finalPrice,
+            grand_total: finalPrice
+        });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error generating quotation:', err);
+        res.status(500).json({
+            success: false,
+            message: err.message || 'Failed to generate quotation'
+        });
+    } finally {
+        connection.release();
+    }
+});
 
 // =======================================================
 // Get All Quotations with Items
