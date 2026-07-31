@@ -886,6 +886,64 @@ router.get("/compare/:userId", async (req, res) => {
 
 });
 
+router.get("/compare/details/:userId", async(req,res)=>{
+
+try{
+
+const userId=req.params.userId;
+
+const [rows]=await db.promise().query(`
+
+SELECT
+
+p.id,
+p.product_name,
+p.product_brand,
+p.price,
+
+pc.product_series,
+pc.conductor_type,
+pc.cable_od,
+pc.jacket_material,
+pc.bandwidth,
+pc.max_data_rate,
+pc.internal_design,
+pc.typical_applications,
+pc.operating_temperature,
+pc.poe_support,
+
+(
+SELECT image_url
+FROM product_variants
+WHERE product_id=p.id
+LIMIT 1
+) image
+
+FROM compare_products cp
+
+JOIN products p
+ON cp.product_id=p.id
+
+LEFT JOIN product_comparisons pc
+ON pc.product_id=p.id
+
+WHERE cp.user_id=?
+
+`,[userId]);
+
+res.json({
+success:true,
+data:rows
+});
+
+}catch(err){
+
+res.status(500).json(err);
+
+}
+
+});
+
 router.delete("/compare/:userId/:productId", async(req,res)=>{
 
     try{
