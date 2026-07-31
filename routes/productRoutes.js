@@ -36,14 +36,9 @@ const storage = multer.diskStorage({
   },
 });
 
-// ====================================
-// MULTER CONFIGURATION
-// ====================================
 const upload = multer({
   storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
-  },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === "images" || file.fieldname === "product_images") {
       const allowed = /jpeg|jpg|png|webp|gif/;
@@ -51,7 +46,6 @@ const upload = multer({
       if (allowed.test(ext) && allowed.test(file.mimetype)) {
         return cb(null, true);
       }
-      console.warn(`Rejected image upload "${file.originalname}" - invalid type (${file.mimetype})`);
       return cb(new Error("Only image files are allowed"));
     }
     if (file.fieldname === "product_details_pdf") {
@@ -59,16 +53,12 @@ const upload = multer({
       if (ext === ".pdf") {
         return cb(null, true);
       }
-      console.warn(`Rejected PDF upload "${file.originalname}" - invalid extension`);
       return cb(new Error("Only PDF files are allowed"));
     }
     cb(null, true);
   },
 });
 
-// ====================================
-// MULTER ERROR-WRAPPING HELPER
-// ====================================
 function uploadWithLogging(multerMiddleware, routeLabel) {
   return (req, res, next) => {
     multerMiddleware(req, res, (err) => {
@@ -82,7 +72,7 @@ function uploadWithLogging(multerMiddleware, routeLabel) {
 }
 
 // ====================================
-// CREATE PRODUCT
+// CREATE PRODUCT (Enhanced)
 // ====================================
 router.post(
   "/",
@@ -105,20 +95,39 @@ router.post(
         discount,
         product_description,
         warranty,
+        // New fields
+        bandwidth,
+        max_data_rate,
+        internal_design,
+        typical_applications,
+        conductor_type,
+        cable_od,
+        jacket_material,
+        operating_temperature,
+        poe_support,
+        product_series,
+        rack_type,
+        static_load,
+        mounting_type,
+        rack_standard,
+        construction_type
       } = req.body;
 
       let pdfFile = "";
       if (req.files && req.files["product_details_pdf"]) {
         pdfFile = req.files["product_details_pdf"][0].filename;
       }
-      console.log('PDF filename:', pdfFile || '(none uploaded)');
 
       const sql = `
         INSERT INTO products (
           product_name, product_code, product_category_id, product_brand,
           product_details_pdf, price, dimensions, specifications,
-          weight, discount, product_description, warranty
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          weight, discount, product_description, warranty,
+          bandwidth, max_data_rate, internal_design, typical_applications,
+          conductor_type, cable_od, jacket_material, operating_temperature,
+          poe_support, product_series, rack_type, static_load,
+          mounting_type, rack_standard, construction_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const [result] = await db.query(sql, [
@@ -134,6 +143,21 @@ router.post(
         discount || 0,
         product_description,
         warranty,
+        bandwidth || null,
+        max_data_rate || null,
+        internal_design || null,
+        typical_applications || null,
+        conductor_type || null,
+        cable_od || null,
+        jacket_material || null,
+        operating_temperature || null,
+        poe_support || null,
+        product_series || null,
+        rack_type || null,
+        static_load || null,
+        mounting_type || null,
+        rack_standard || null,
+        construction_type || null
       ]);
 
       console.log('✅ Product inserted successfully, ID:', result.insertId);
@@ -150,7 +174,7 @@ router.post(
 );
 
 // ====================================
-// CREATE VARIANT (POST)
+// CREATE VARIANT (Enhanced with options)
 // ====================================
 router.post(
   "/variants",
@@ -165,9 +189,19 @@ router.post(
     })) : 'none');
 
     try {
-      const { product_id, color_name, color_hex, price, stock } = req.body;
+      const { 
+        product_id, 
+        color_name, 
+        color_hex, 
+        price, 
+        stock,
+        variant_size,
+        part_code,
+        description,
+        datasheet_url,
+        availability
+      } = req.body;
 
-      // Validate required fields
       if (!product_id) {
         return res.status(400).json({ success: false, error: "product_id is required" });
       }
@@ -181,7 +215,6 @@ router.post(
         return res.status(400).json({ success: false, error: "price is required" });
       }
 
-      // Parse values
       const productIdInt = parseInt(product_id, 10);
       const variantPrice = parseFloat(price);
       const variantStock = stock ? parseInt(stock, 10) : 100;
@@ -193,22 +226,20 @@ router.post(
         return res.status(400).json({ success: false, error: "price must be a valid positive number" });
       }
 
-      // Check if product exists
       const [productResult] = await db.query("SELECT id FROM products WHERE id = ?", [productIdInt]);
       if (productResult.length === 0) {
         return res.status(404).json({ success: false, error: `Product with id ${productIdInt} not found` });
       }
 
-      // Get first image path
       const firstImage = req.files && req.files.length > 0 
         ? `/uploads/products/${req.files[0].filename}` 
         : null;
 
-      // Insert variant
       const insertSql = `
         INSERT INTO product_variants 
-        (product_id, color_name, color_hex, price, stock, image_url)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (product_id, color_name, color_hex, price, stock, image_url, 
+         variant_size, part_code, description, datasheet_url, availability)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const [insertResult] = await db.query(insertSql, [
@@ -217,13 +248,17 @@ router.post(
         color_hex, 
         variantPrice, 
         variantStock, 
-        firstImage
+        firstImage,
+        variant_size || null,
+        part_code || null,
+        description || null,
+        datasheet_url || null,
+        availability || null
       ]);
 
       const variantId = insertResult.insertId;
       console.log(`✅ Variant inserted successfully, ID: ${variantId}`);
 
-      // Return the inserted variant
       const [variantRows] = await db.query(
         "SELECT * FROM product_variants WHERE id = ?",
         [variantId]
@@ -244,7 +279,7 @@ router.post(
 );
 
 // ====================================
-// UPDATE VARIANT (PUT)
+// UPDATE VARIANT
 // ====================================
 router.put(
   "/variants/:id",
@@ -257,13 +292,24 @@ router.put(
 
     try {
       const variantId = parseInt(req.params.id, 10);
-      const { product_id, color_name, color_hex, price, stock, keep_image } = req.body;
+      const { 
+        product_id, 
+        color_name, 
+        color_hex, 
+        price, 
+        stock, 
+        keep_image,
+        variant_size,
+        part_code,
+        description,
+        datasheet_url,
+        availability
+      } = req.body;
 
       if (isNaN(variantId) || variantId <= 0) {
         return res.status(400).json({ success: false, error: "Invalid variant ID" });
       }
 
-      // Check if variant exists
       const [variantResult] = await db.query(
         "SELECT * FROM product_variants WHERE id = ?",
         [variantId]
@@ -273,42 +319,32 @@ router.put(
         return res.status(404).json({ success: false, error: `Variant with id ${variantId} not found` });
       }
 
-      // Get existing variant
       const existingVariant = variantResult[0];
       
-      // Use provided values or keep existing
       const finalColorName = color_name || existingVariant.color_name;
       const finalColorHex = color_hex || existingVariant.color_hex;
       const finalPrice = price ? parseFloat(price) : existingVariant.price;
       const finalStock = stock ? parseInt(stock, 10) : existingVariant.stock;
       const finalProductId = product_id ? parseInt(product_id, 10) : existingVariant.product_id;
+      const finalVariantSize = variant_size !== undefined ? variant_size : existingVariant.variant_size;
+      const finalPartCode = part_code !== undefined ? part_code : existingVariant.part_code;
+      const finalDescription = description !== undefined ? description : existingVariant.description;
+      const finalDatasheetUrl = datasheet_url !== undefined ? datasheet_url : existingVariant.datasheet_url;
+      const finalAvailability = availability !== undefined ? availability : existingVariant.availability;
 
-      // Determine image URL
       let imageUrl = existingVariant.image_url;
       if (req.files && req.files.length > 0) {
-        // If new image uploaded, use it
         imageUrl = `/uploads/products/${req.files[0].filename}`;
       } else if (keep_image === 'false' || keep_image === false) {
-        // If keep_image is false, remove the image
         imageUrl = null;
       }
-      // else keep existing image
 
-      console.log('Updating variant with data:', {
-        id: variantId,
-        product_id: finalProductId,
-        color_name: finalColorName,
-        color_hex: finalColorHex,
-        price: finalPrice,
-        stock: finalStock,
-        image_url: imageUrl
-      });
-
-      // Update variant
       const updateSql = `
         UPDATE product_variants 
         SET product_id = ?, color_name = ?, color_hex = ?, 
-            price = ?, stock = ?, image_url = ?
+            price = ?, stock = ?, image_url = ?,
+            variant_size = ?, part_code = ?, description = ?,
+            datasheet_url = ?, availability = ?
         WHERE id = ?
       `;
 
@@ -318,13 +354,17 @@ router.put(
         finalColorHex, 
         finalPrice, 
         finalStock, 
-        imageUrl, 
+        imageUrl,
+        finalVariantSize,
+        finalPartCode,
+        finalDescription,
+        finalDatasheetUrl,
+        finalAvailability,
         variantId
       ]);
 
       console.log(`✅ Variant ${variantId} updated successfully`);
 
-      // Return updated variant
       const [updatedVariant] = await db.query(
         "SELECT * FROM product_variants WHERE id = ?",
         [variantId]
@@ -355,7 +395,6 @@ router.delete("/variants/:id", async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid variant ID" });
     }
 
-    // Check if variant exists
     const [variantResult] = await db.query(
       "SELECT * FROM product_variants WHERE id = ?",
       [variantId]
@@ -365,7 +404,6 @@ router.delete("/variants/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "Variant not found" });
     }
 
-    // Delete variant
     await db.query("DELETE FROM product_variants WHERE id = ?", [variantId]);
 
     console.log(`Variant ${variantId} deleted`);
@@ -406,7 +444,7 @@ router.get("/products-with-variants", async (req, res) => {
 
     for (const product of products) {
       const [variants] = await db.query(
-        "SELECT * FROM product_variants WHERE product_id = ?",
+        "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
         [product.id]
       );
       product.variants = variants;
@@ -440,7 +478,7 @@ router.get("/products-with-variants/:id", async (req, res) => {
 
     const product = productResult[0];
     const [variants] = await db.query(
-      "SELECT * FROM product_variants WHERE product_id = ?",
+      "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
       [product.id]
     );
 
@@ -453,7 +491,7 @@ router.get("/products-with-variants/:id", async (req, res) => {
 });
 
 // ====================================
-// UPDATE PRODUCT
+// UPDATE PRODUCT (Enhanced)
 // ====================================
 router.put(
   "/:id",
@@ -477,20 +515,38 @@ router.put(
         product_description,
         warranty,
         existing_pdf,
+        bandwidth,
+        max_data_rate,
+        internal_design,
+        typical_applications,
+        conductor_type,
+        cable_od,
+        jacket_material,
+        operating_temperature,
+        poe_support,
+        product_series,
+        rack_type,
+        static_load,
+        mounting_type,
+        rack_standard,
+        construction_type
       } = req.body;
 
       let finalPdf = existing_pdf || "";
       if (req.files && req.files["product_details_pdf"]) {
         finalPdf = req.files["product_details_pdf"][0].filename;
       }
-      console.log('Final PDF filename:', finalPdf || '(none)');
 
       const sql = `
         UPDATE products SET
           product_name=?, product_code=?, product_category_id=?,
           product_brand=?, product_details_pdf=?, price=?,
           dimensions=?, specifications=?, weight=?,
-          discount=?, product_description=?, warranty=?
+          discount=?, product_description=?, warranty=?,
+          bandwidth=?, max_data_rate=?, internal_design=?, typical_applications=?,
+          conductor_type=?, cable_od=?, jacket_material=?, operating_temperature=?,
+          poe_support=?, product_series=?, rack_type=?, static_load=?,
+          mounting_type=?, rack_standard=?, construction_type=?
         WHERE id=?
       `;
 
@@ -507,6 +563,21 @@ router.put(
         discount || 0,
         product_description,
         warranty,
+        bandwidth || null,
+        max_data_rate || null,
+        internal_design || null,
+        typical_applications || null,
+        conductor_type || null,
+        cable_od || null,
+        jacket_material || null,
+        operating_temperature || null,
+        poe_support || null,
+        product_series || null,
+        rack_type || null,
+        static_load || null,
+        mounting_type || null,
+        rack_standard || null,
+        construction_type || null,
         req.params.id,
       ]);
 
@@ -531,13 +602,11 @@ router.delete("/:id", async (req, res) => {
       return res.status(400).json({ error: "Invalid product ID" });
     }
 
-    // First delete variants
     await db.query(
       "DELETE FROM product_variants WHERE product_id = ?",
       [productId]
     );
 
-    // Delete product
     await db.query(
       "DELETE FROM products WHERE id = ?",
       [productId]
@@ -649,6 +718,78 @@ router.get("/:id", async (req, res) => {
   } catch (error) {
     console.error("Error fetching product:", error);
     res.status(500).json(error);
+  }
+});
+
+// ====================================
+// GET COMPARISON DATA
+// ====================================
+router.get("/comparisons/:productId", async (req, res) => {
+  try {
+    const productId = parseInt(req.params.productId, 10);
+    
+    const [comparisons] = await db.query(
+      "SELECT * FROM product_comparisons WHERE product_id = ? ORDER BY brand",
+      [productId]
+    );
+
+    res.json(comparisons);
+  } catch (error) {
+    console.error("Error fetching comparisons:", error);
+    res.status(500).json(error);
+  }
+});
+
+// ====================================
+// CREATE/UPDATE COMPARISON DATA
+// ====================================
+router.post("/comparisons", async (req, res) => {
+  try {
+    const {
+      product_id,
+      brand,
+      product_series,
+      conductor_type,
+      cable_od,
+      jacket_material,
+      bandwidth,
+      operating_temperature,
+      poe_support
+    } = req.body;
+
+    // Check if comparison exists
+    const [existing] = await db.query(
+      "SELECT id FROM product_comparisons WHERE product_id = ? AND brand = ?",
+      [product_id, brand]
+    );
+
+    if (existing.length > 0) {
+      // Update existing
+      await db.query(
+        `UPDATE product_comparisons SET
+          product_series = ?, conductor_type = ?, cable_od = ?,
+          jacket_material = ?, bandwidth = ?, operating_temperature = ?,
+          poe_support = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE product_id = ? AND brand = ?`,
+        [product_series, conductor_type, cable_od, jacket_material, 
+         bandwidth, operating_temperature, poe_support, product_id, brand]
+      );
+    } else {
+      // Insert new
+      await db.query(
+        `INSERT INTO product_comparisons
+          (product_id, brand, product_series, conductor_type, cable_od,
+           jacket_material, bandwidth, operating_temperature, poe_support)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [product_id, brand, product_series, conductor_type, cable_od,
+         jacket_material, bandwidth, operating_temperature, poe_support]
+      );
+    }
+
+    res.json({ success: true, message: "Comparison data saved successfully" });
+  } catch (error) {
+    console.error("Error saving comparison data:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
