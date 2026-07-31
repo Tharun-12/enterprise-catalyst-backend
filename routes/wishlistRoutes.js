@@ -89,15 +89,24 @@ router.get("/wishlist/all-with-users", async (req, res) => {
             ORDER BY w.created_at DESC`
         );
 
-        // Get variants for each product
+        // Get variants for each product - FIXED COLUMN NAMES
         for (const item of rows) {
             const [variants] = await db.execute(
                 `SELECT 
                     id, 
                     product_id, 
-                    color_name, 
-                    color_hex, 
+                    variant_name,
+                    part_code,
+                    category,
+                    brand,
+                    description,
+                    spec_type,
+                    color as color_name,  -- Alias color as color_name
+                    color as color_hex,   -- Alias color as color_hex
+                    size,
                     price, 
+                    availability,
+                    datasheet_url,
                     stock, 
                     image_url 
                 FROM product_variants 
@@ -148,12 +157,8 @@ router.get("/wishlist/all-with-users", async (req, res) => {
     }
 });
 
-
 // ========================================
 // Get User Wishlist
-// ========================================
-// ========================================
-// Get User Wishlist with Variants
 // ========================================
 router.get("/wishlist/:userId", async (req, res) => {
     try {
@@ -185,15 +190,24 @@ router.get("/wishlist/:userId", async (req, res) => {
             [userId]
         );
 
-        // Get variants for each product
+        // Get variants for each product - FIXED COLUMN NAMES
         for (const product of rows) {
             const [variants] = await db.execute(
                 `SELECT 
                     id, 
                     product_id, 
-                    color_name, 
-                    color_hex, 
+                    variant_name,
+                    part_code,
+                    category,
+                    brand,
+                    description,
+                    spec_type,
+                    color as color_name,  -- Alias color as color_name
+                    color as color_hex,   -- Alias color as color_hex
+                    size,
                     price, 
+                    availability,
+                    datasheet_url,
                     stock, 
                     image_url 
                 FROM product_variants 
@@ -216,7 +230,6 @@ router.get("/wishlist/:userId", async (req, res) => {
         });
     }
 });
-
 
 // ========================================
 // Check Wishlist
