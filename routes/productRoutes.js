@@ -721,76 +721,215 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// ====================================
-// GET COMPARISON DATA
-// ====================================
-router.get("/comparisons/:productId", async (req, res) => {
-  try {
-    const productId = parseInt(req.params.productId, 10);
+// // ====================================
+// // GET COMPARISON DATA
+// // ====================================
+// router.get("/comparisons/:productId", async (req, res) => {
+//   try {
+//     const productId = parseInt(req.params.productId, 10);
     
-    const [comparisons] = await db.query(
-      "SELECT * FROM product_comparisons WHERE product_id = ? ORDER BY brand",
-      [productId]
+//     const [comparisons] = await db.query(
+//       "SELECT * FROM product_comparisons WHERE product_id = ? ORDER BY brand",
+//       [productId]
+//     );
+
+//     res.json(comparisons);
+//   } catch (error) {
+//     console.error("Error fetching comparisons:", error);
+//     res.status(500).json(error);
+//   }
+// });
+
+// // ====================================
+// // CREATE/UPDATE COMPARISON DATA
+// // ====================================
+// router.post("/comparisons", async (req, res) => {
+//   try {
+//     const {
+//       product_id,
+//       brand,
+//       product_series,
+//       conductor_type,
+//       cable_od,
+//       jacket_material,
+//       bandwidth,
+//       operating_temperature,
+//       poe_support
+//     } = req.body;
+
+//     // Check if comparison exists
+//     const [existing] = await db.query(
+//       "SELECT id FROM product_comparisons WHERE product_id = ? AND brand = ?",
+//       [product_id, brand]
+//     );
+
+//     if (existing.length > 0) {
+//       // Update existing
+//       await db.query(
+//         `UPDATE product_comparisons SET
+//           product_series = ?, conductor_type = ?, cable_od = ?,
+//           jacket_material = ?, bandwidth = ?, operating_temperature = ?,
+//           poe_support = ?, updated_at = CURRENT_TIMESTAMP
+//         WHERE product_id = ? AND brand = ?`,
+//         [product_series, conductor_type, cable_od, jacket_material, 
+//          bandwidth, operating_temperature, poe_support, product_id, brand]
+//       );
+//     } else {
+//       // Insert new
+//       await db.query(
+//         `INSERT INTO product_comparisons
+//           (product_id, brand, product_series, conductor_type, cable_od,
+//            jacket_material, bandwidth, operating_temperature, poe_support)
+//          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//         [product_id, brand, product_series, conductor_type, cable_od,
+//          jacket_material, bandwidth, operating_temperature, poe_support]
+//       );
+//     }
+
+//     res.json({ success: true, message: "Comparison data saved successfully" });
+//   } catch (error) {
+//     console.error("Error saving comparison data:", error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+
+
+router.post("/compare/add", async (req, res) => {
+  try {
+    const { userId, productId } = req.body;
+
+    if (!userId || !productId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId and productId are required"
+      });
+    }
+
+    // Maximum 4 products
+    const [count] = await db.promise().query(
+      "SELECT COUNT(*) AS total FROM compare_products WHERE user_id=?",
+      [userId]
     );
 
-    res.json(comparisons);
-  } catch (error) {
-    console.error("Error fetching comparisons:", error);
-    res.status(500).json(error);
+    if (count[0].total >= 4) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 4 products allowed for comparison."
+      });
+    }
+
+    // Already exists?
+    const [exists] = await db.promise().query(
+      "SELECT * FROM compare_products WHERE user_id=? AND product_id=?",
+      [userId, productId]
+    );
+
+    if (exists.length) {
+      return res.json({
+        success: true,
+        message: "Already added."
+      });
+    }
+
+    await db.promise().query(
+      "INSERT INTO compare_products(user_id,product_id) VALUES(?,?)",
+      [userId, productId]
+    );
+
+    res.json({
+      success: true,
+      message: "Product added to compare."
+    });
+
+  } catch (err) {
+    res.status(500).json(err);
   }
 });
 
-// ====================================
-// CREATE/UPDATE COMPARISON DATA
-// ====================================
-router.post("/comparisons", async (req, res) => {
-  try {
-    const {
-      product_id,
-      brand,
-      product_series,
-      conductor_type,
-      cable_od,
-      jacket_material,
-      bandwidth,
-      operating_temperature,
-      poe_support
-    } = req.body;
 
-    // Check if comparison exists
-    const [existing] = await db.query(
-      "SELECT id FROM product_comparisons WHERE product_id = ? AND brand = ?",
-      [product_id, brand]
-    );
+router.get("/compare/:userId", async (req, res) => {
 
-    if (existing.length > 0) {
-      // Update existing
-      await db.query(
-        `UPDATE product_comparisons SET
-          product_series = ?, conductor_type = ?, cable_od = ?,
-          jacket_material = ?, bandwidth = ?, operating_temperature = ?,
-          poe_support = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE product_id = ? AND brand = ?`,
-        [product_series, conductor_type, cable_od, jacket_material, 
-         bandwidth, operating_temperature, poe_support, product_id, brand]
-      );
-    } else {
-      // Insert new
-      await db.query(
-        `INSERT INTO product_comparisons
-          (product_id, brand, product_series, conductor_type, cable_od,
-           jacket_material, bandwidth, operating_temperature, poe_support)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [product_id, brand, product_series, conductor_type, cable_od,
-         jacket_material, bandwidth, operating_temperature, poe_support]
-      );
+    try {
+
+        const userId=req.params.userId;
+
+        const [rows]=await db.promise().query(`
+        SELECT
+        cp.id,
+        cp.product_id,
+        p.product_name,
+        p.product_brand,
+        p.price,
+        (
+          SELECT image_url
+          FROM product_variants
+          WHERE product_id=p.id
+          LIMIT 1
+        ) image
+        FROM compare_products cp
+        JOIN products p
+        ON cp.product_id=p.id
+        WHERE cp.user_id=?
+        `,[userId]);
+
+        res.json({
+            success:true,
+            data:rows
+        });
+
+    } catch(err){
+
+        res.status(500).json(err);
+
     }
 
-    res.json({ success: true, message: "Comparison data saved successfully" });
-  } catch (error) {
-    console.error("Error saving comparison data:", error);
-    res.status(500).json({ error: error.message });
-  }
+});
+
+router.delete("/compare/:userId/:productId", async(req,res)=>{
+
+    try{
+
+        const {userId,productId}=req.params;
+
+        await db.promise().query(
+        "DELETE FROM compare_products WHERE user_id=? AND product_id=?",
+        [userId,productId]
+        );
+
+        res.json({
+            success:true,
+            message:"Removed successfully"
+        });
+
+    }catch(err){
+
+        res.status(500).json(err);
+
+    }
+
+});
+
+router.delete("/compare/clear/:userId",async(req,res)=>{
+
+    try{
+
+        await db.promise().query(
+        "DELETE FROM compare_products WHERE user_id=?",
+        [req.params.userId]
+        );
+
+        res.json({
+            success:true,
+            message:"Compare list cleared"
+        });
+
+    }catch(err){
+
+        res.status(500).json(err);
+
+    }
+
 });
 
 module.exports = router;
