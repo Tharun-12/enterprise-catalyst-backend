@@ -90,21 +90,7 @@ router.post(
                 discount,
                 product_description,
                 warranty,
-                bandwidth,
-                max_data_rate,
-                internal_design,
-                typical_applications,
-                conductor_type,
-                cable_od,
-                jacket_material,
-                operating_temperature,
-                poe_support,
-                product_series,
-                rack_type,
-                static_load,
-                mounting_type,
-                rack_standard,
-                construction_type
+                product_series
             } = req.body;
 
             let pdfFile = "";
@@ -117,41 +103,24 @@ router.post(
                     product_name, product_code, product_category_id, product_brand,
                     product_details_pdf, price, dimensions, specifications,
                     weight, discount, product_description, warranty,
-                    bandwidth, max_data_rate, internal_design, typical_applications,
-                    conductor_type, cable_od, jacket_material, operating_temperature,
-                    poe_support, product_series, rack_type, static_load,
-                    mounting_type, rack_standard, construction_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    product_series
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const [result] = await db.query(sql, [
                 product_name,
                 product_code,
                 product_category_id,
-                product_brand,
+                product_brand || null,
                 pdfFile,
                 price,
-                dimensions,
-                specifications,
-                weight,
+                dimensions || null,
+                specifications || null,
+                weight || null,
                 discount || 0,
-                product_description,
-                warranty,
-                bandwidth || null,
-                max_data_rate || null,
-                internal_design || null,
-                typical_applications || null,
-                conductor_type || null,
-                cable_od || null,
-                jacket_material || null,
-                operating_temperature || null,
-                poe_support || null,
-                product_series || null,
-                rack_type || null,
-                static_load || null,
-                mounting_type || null,
-                rack_standard || null,
-                construction_type || null
+                product_description || null,
+                warranty || null,
+                product_series || null
             ]);
 
             res.status(201).json({
@@ -243,21 +212,7 @@ router.put(
                 product_description,
                 warranty,
                 existing_pdf,
-                bandwidth,
-                max_data_rate,
-                internal_design,
-                typical_applications,
-                conductor_type,
-                cable_od,
-                jacket_material,
-                operating_temperature,
-                poe_support,
-                product_series,
-                rack_type,
-                static_load,
-                mounting_type,
-                rack_standard,
-                construction_type
+                product_series
             } = req.body;
 
             let finalPdf = existing_pdf || "";
@@ -271,10 +226,7 @@ router.put(
                     product_brand=?, product_details_pdf=?, price=?,
                     dimensions=?, specifications=?, weight=?,
                     discount=?, product_description=?, warranty=?,
-                    bandwidth=?, max_data_rate=?, internal_design=?, typical_applications=?,
-                    conductor_type=?, cable_od=?, jacket_material=?, operating_temperature=?,
-                    poe_support=?, product_series=?, rack_type=?, static_load=?,
-                    mounting_type=?, rack_standard=?, construction_type=?
+                    product_series=?
                 WHERE id=?
             `;
 
@@ -282,30 +234,16 @@ router.put(
                 product_name,
                 product_code,
                 product_category_id,
-                product_brand,
+                product_brand || null,
                 finalPdf,
                 price,
-                dimensions,
-                specifications,
-                weight,
+                dimensions || null,
+                specifications || null,
+                weight || null,
                 discount || 0,
-                product_description,
-                warranty,
-                bandwidth || null,
-                max_data_rate || null,
-                internal_design || null,
-                typical_applications || null,
-                conductor_type || null,
-                cable_od || null,
-                jacket_material || null,
-                operating_temperature || null,
-                poe_support || null,
+                product_description || null,
+                warranty || null,
                 product_series || null,
-                rack_type || null,
-                static_load || null,
-                mounting_type || null,
-                rack_standard || null,
-                construction_type || null,
                 req.params.id,
             ]);
 
@@ -324,7 +262,6 @@ router.delete("/:id", async (req, res) => {
 
         await db.query("DELETE FROM product_variants WHERE product_id = ?", [productId]);
         await db.query("DELETE FROM spec_comparison WHERE product_id = ?", [productId]);
-        await db.query("DELETE FROM brand_comparison WHERE product_id = ?", [productId]);
         await db.query("DELETE FROM products WHERE id = ?", [productId]);
 
         res.json({ success: true, message: "Product deleted successfully" });
@@ -359,6 +296,8 @@ router.post(
                 datasheet_url,
                 stock
             } = req.body;
+
+            console.log("Creating variant with data:", req.body);
 
             if (!product_id || !variant_name || !part_code || !brand || !price) {
                 return res.status(400).json({
@@ -432,6 +371,8 @@ router.put(
                 stock,
                 keep_image
             } = req.body;
+
+            console.log("Updating variant:", variantId, req.body);
 
             const [variantResult] = await db.query(
                 "SELECT * FROM product_variants WHERE id = ?",
@@ -528,7 +469,7 @@ router.get("/variants/:productId", async (req, res) => {
 });
 
 // ============================================
-// SPEC COMPARISON OPERATIONS (CAT6 vs CAT6A)
+// SPEC COMPARISON OPERATIONS
 // ============================================
 
 // CREATE/UPDATE SPEC COMPARISON
@@ -542,6 +483,8 @@ router.post("/spec-comparison", async (req, res) => {
             internal_design,
             typical_applications
         } = req.body;
+
+        console.log("Saving spec comparison:", req.body);
 
         // Check if exists
         const [existing] = await db.query(
@@ -586,7 +529,6 @@ router.get("/spec-comparison/:productId", async (req, res) => {
             [productId]
         );
 
-        // Format as object with spec_type as key
         const result = {};
         comparisons.forEach(item => {
             result[item.spec_type] = item;
@@ -615,99 +557,17 @@ router.delete("/spec-comparison/:productId/:specType", async (req, res) => {
     }
 });
 
-// ============================================
-// BRAND COMPARISON OPERATIONS
-// ============================================
-
-// CREATE BRAND COMPARISON
-router.post("/brand-comparisons", async (req, res) => {
-    try {
-        const {
-            product_id,
-            brand,
-            product_series,
-            conductor_type,
-            cable_od,
-            jacket_material,
-            bandwidth,
-            operating_temperature,
-            poe_support
-        } = req.body;
-
-        // Check if brand already exists for this product
-        const [existing] = await db.query(
-            "SELECT id FROM brand_comparison WHERE product_id = ? AND brand = ?",
-            [product_id, brand]
-        );
-
-        if (existing.length > 0) {
-            // Update
-            await db.query(
-                `UPDATE brand_comparison SET
-                    product_series = ?,
-                    conductor_type = ?,
-                    cable_od = ?,
-                    jacket_material = ?,
-                    bandwidth = ?,
-                    operating_temperature = ?,
-                    poe_support = ?
-                WHERE product_id = ? AND brand = ?`,
-                [product_series, conductor_type, cable_od, jacket_material,
-                    bandwidth, operating_temperature, poe_support, product_id, brand]
-            );
-        } else {
-            // Insert
-            await db.query(
-                `INSERT INTO brand_comparison
-                    (product_id, brand, product_series, conductor_type, cable_od,
-                     jacket_material, bandwidth, operating_temperature, poe_support)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [product_id, brand, product_series, conductor_type, cable_od,
-                    jacket_material, bandwidth, operating_temperature, poe_support]
-            );
-        }
-
-        res.json({ success: true, message: "Brand comparison saved successfully" });
-    } catch (error) {
-        console.error("Error saving brand comparison:", error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// GET BRAND COMPARISONS BY PRODUCT
-router.get("/brand-comparisons/:productId", async (req, res) => {
+// DELETE ALL SPEC COMPARISONS FOR A PRODUCT
+router.delete("/spec-comparison/:productId/all", async (req, res) => {
     try {
         const productId = parseInt(req.params.productId, 10);
-        const [comparisons] = await db.query(
-            "SELECT * FROM brand_comparison WHERE product_id = ? ORDER BY brand",
+        await db.query(
+            "DELETE FROM spec_comparison WHERE product_id = ?",
             [productId]
         );
-        res.json(comparisons);
+        res.json({ success: true, message: "All spec comparisons deleted successfully" });
     } catch (error) {
-        console.error("Error fetching brand comparisons:", error);
-        res.status(500).json(error);
-    }
-});
-
-// DELETE BRAND COMPARISON
-router.delete("/brand-comparisons/:id", async (req, res) => {
-    try {
-        const id = parseInt(req.params.id, 10);
-        await db.query("DELETE FROM brand_comparison WHERE id = ?", [id]);
-        res.json({ success: true, message: "Brand comparison deleted successfully" });
-    } catch (error) {
-        console.error("Error deleting brand comparison:", error);
-        res.status(500).json(error);
-    }
-});
-
-// GET ALL BRANDS (for dropdown)
-router.get("/brands/list", async (req, res) => {
-    try {
-        const [brands] = await db.query("SELECT DISTINCT brand FROM brand_comparison ORDER BY brand");
-        res.json(brands);
-    } catch (error) {
-        console.error("Error fetching brands:", error);
+        console.error("Error deleting spec comparisons:", error);
         res.status(500).json(error);
     }
 });

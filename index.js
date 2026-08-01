@@ -15,7 +15,7 @@ const userRoutes = require('./routes/userRoutes');
 const inquiryRoutes = require("./routes/inquiryRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
 const quotationRoutes = require("./routes/quotationRoutes");
-
+const specificationsRoutes = require("./routes/specificationsRoutes");
 
 
 const app = express();
@@ -43,6 +43,7 @@ app.get("/api/health", (req, res) => {
 // API Routes
 app.use("/api/categories", categoryRoutes);
 app.use("/api/brands", brandRoutes);
+app.use("/api/specializations", specificationsRoutes);
 // app.use("/api/variants", variantRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/settings", settingsRoutes);
