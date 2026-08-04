@@ -72,7 +72,8 @@ function uploadWithLogging(multerMiddleware, routeLabel) {
 // PRODUCT CRUD OPERATIONS
 // ============================================
 
-// CREATE PRODUCT
+// CREATE PRODUCT - Updated (removed specifications)
+// CREATE PRODUCT - Updated (requires manual product_code)
 router.post(
     "/",
     uploadWithLogging(upload.fields([{ name: "product_details_pdf", maxCount: 1 }]), "POST /api/products"),
@@ -84,52 +85,67 @@ router.post(
                 product_category_id,
                 product_brand,
                 price,
-                dimensions,
-                specifications,
-                weight,
                 discount,
                 product_description,
                 warranty,
-                product_series
+                product_series,
+                product_type
             } = req.body;
+
+            // REQUIRE product_code - do NOT auto-generate
+            if (!product_code) {
+                return res.status(400).json({
+                    success: false,
+                    error: "Product code is required. Please enter a unique product code."
+                });
+            }
 
             let pdfFile = "";
             if (req.files && req.files["product_details_pdf"]) {
                 pdfFile = req.files["product_details_pdf"][0].filename;
             }
 
+            const finalCategoryId = product_category_id || null;
+            const finalBrand = product_brand || null;
+
             const sql = `
                 INSERT INTO products (
                     product_name, product_code, product_category_id, product_brand,
-                    product_details_pdf, price, dimensions, specifications,
-                    weight, discount, product_description, warranty,
-                    product_series
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    product_details_pdf, price,
+                    discount, product_description, warranty,
+                    product_series, product_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const [result] = await db.query(sql, [
                 product_name,
-                product_code,
-                product_category_id,
-                product_brand || null,
+                product_code, // Use the manually entered product_code
+                finalCategoryId,
+                finalBrand,
                 pdfFile,
-                price,
-                dimensions || null,
-                specifications || null,
-                weight || null,
+                price || null,
                 discount || 0,
                 product_description || null,
                 warranty || null,
-                product_series || null
+                product_series || null,
+                product_type || null
             ]);
 
             res.status(201).json({
                 success: true,
                 message: "Product added successfully",
                 id: result.insertId,
+                product_code: product_code
             });
         } catch (error) {
             console.error("Error in product creation:", error);
+            // Check for duplicate product_code error
+            if (error.code === 'ER_DUP_ENTRY') {
+                return res.status(400).json({
+                    success: false,
+                    error: "Product code already exists. Please enter a unique product code."
+                });
+            }
             res.status(500).json({ error: error.message });
         }
     }
@@ -193,7 +209,7 @@ router.get("/products-with-variants/:id", async (req, res) => {
     }
 });
 
-// UPDATE PRODUCT
+// UPDATE PRODUCT - Updated (removed specifications)
 router.put(
     "/:id",
     uploadWithLogging(upload.fields([{ name: "product_details_pdf", maxCount: 1 }]), "PUT /api/products/:id"),
@@ -205,45 +221,71 @@ router.put(
                 product_category_id,
                 product_brand,
                 price,
-                dimensions,
-                specifications,
-                weight,
                 discount,
                 product_description,
                 warranty,
                 existing_pdf,
-                product_series
+                product_series,
+                product_type
             } = req.body;
 
             let finalPdf = existing_pdf || "";
+            
+            // Check if new PDF file was uploaded
             if (req.files && req.files["product_details_pdf"]) {
+                // If there's an existing PDF, delete it
+                if (existing_pdf) {
+                    const oldPdfPath = path.join(pdfUploadDir, existing_pdf);
+                    try {
+                        if (fs.existsSync(oldPdfPath)) {
+                            fs.unlinkSync(oldPdfPath);
+                        }
+                    } catch (err) {
+                        console.error("Error deleting old PDF:", err);
+                    }
+                }
                 finalPdf = req.files["product_details_pdf"][0].filename;
             }
+
+            // Get existing product to preserve values if not provided
+            const [existingProduct] = await db.query(
+                "SELECT product_code, product_category_id, product_brand FROM products WHERE id = ?",
+                [req.params.id]
+            );
+            
+            if (existingProduct.length === 0) {
+                return res.status(404).json({ error: "Product not found" });
+            }
+
+            const finalProductCode = product_code || existingProduct[0].product_code;
+            const finalCategoryId = product_category_id !== undefined && product_category_id !== null && product_category_id !== '' 
+                ? product_category_id 
+                : existingProduct[0].product_category_id;
+            const finalBrand = product_brand !== undefined && product_brand !== null && product_brand !== '' 
+                ? product_brand 
+                : existingProduct[0].product_brand;
 
             const sql = `
                 UPDATE products SET
                     product_name=?, product_code=?, product_category_id=?,
                     product_brand=?, product_details_pdf=?, price=?,
-                    dimensions=?, specifications=?, weight=?,
                     discount=?, product_description=?, warranty=?,
-                    product_series=?
+                    product_series=?, product_type=?
                 WHERE id=?
             `;
 
             await db.query(sql, [
                 product_name,
-                product_code,
-                product_category_id,
-                product_brand || null,
+                finalProductCode,
+                finalCategoryId,
+                finalBrand,
                 finalPdf,
-                price,
-                dimensions || null,
-                specifications || null,
-                weight || null,
+                price || null,
                 discount || 0,
                 product_description || null,
                 warranty || null,
                 product_series || null,
+                product_type || null,
                 req.params.id,
             ]);
 
@@ -259,6 +301,23 @@ router.put(
 router.delete("/:id", async (req, res) => {
     try {
         const productId = parseInt(req.params.id, 10);
+
+        // Get product PDF to delete from filesystem
+        const [product] = await db.query(
+            "SELECT product_details_pdf FROM products WHERE id = ?",
+            [productId]
+        );
+        
+        if (product.length > 0 && product[0].product_details_pdf) {
+            const pdfPath = path.join(pdfUploadDir, product[0].product_details_pdf);
+            try {
+                if (fs.existsSync(pdfPath)) {
+                    fs.unlinkSync(pdfPath);
+                }
+            } catch (err) {
+                console.error("Error deleting PDF:", err);
+            }
+        }
 
         await db.query("DELETE FROM product_variants WHERE product_id = ?", [productId]);
         await db.query("DELETE FROM spec_comparison WHERE product_id = ?", [productId]);
@@ -387,6 +446,17 @@ router.put(
             let imageUrl = existingVariant.image_url;
 
             if (req.files && req.files.length > 0) {
+                // Delete old image if exists
+                if (existingVariant.image_url) {
+                    const oldImagePath = path.join(productUploadDir, path.basename(existingVariant.image_url));
+                    try {
+                        if (fs.existsSync(oldImagePath)) {
+                            fs.unlinkSync(oldImagePath);
+                        }
+                    } catch (err) {
+                        console.error("Error deleting old image:", err);
+                    }
+                }
                 imageUrl = `/uploads/products/${req.files[0].filename}`;
             } else if (keep_image === 'false' || keep_image === false) {
                 imageUrl = null;
@@ -445,6 +515,24 @@ router.put(
 router.delete("/variants/:id", async (req, res) => {
     try {
         const variantId = parseInt(req.params.id, 10);
+        
+        // Get image path to delete
+        const [variant] = await db.query(
+            "SELECT image_url FROM product_variants WHERE id = ?",
+            [variantId]
+        );
+        
+        if (variant.length > 0 && variant[0].image_url) {
+            const imagePath = path.join(productUploadDir, path.basename(variant[0].image_url));
+            try {
+                if (fs.existsSync(imagePath)) {
+                    fs.unlinkSync(imagePath);
+                }
+            } catch (err) {
+                console.error("Error deleting variant image:", err);
+            }
+        }
+        
         await db.query("DELETE FROM product_variants WHERE id = ?", [variantId]);
         res.json({ success: true, message: "Variant deleted successfully" });
     } catch (error) {

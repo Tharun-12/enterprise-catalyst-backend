@@ -2,13 +2,11 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
-
 // ========================================
 // Add Product To Wishlist
 // ========================================
 router.post("/wishlist", async (req, res) => {
     try {
-
         const { user_id, product_id } = req.body;
 
         if (!user_id || !product_id) {
@@ -18,7 +16,6 @@ router.post("/wishlist", async (req, res) => {
             });
         }
 
-        // Check if already exists
         const [exists] = await db.execute(
             "SELECT * FROM wishlist WHERE user_id=? AND product_id=?",
             [user_id, product_id]
@@ -51,7 +48,6 @@ router.post("/wishlist", async (req, res) => {
     }
 });
 
-
 // ========================================
 // Get All Wishlist Items with User Details
 // ========================================
@@ -68,12 +64,11 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                 p.product_brand,
                 p.product_details_pdf,
                 p.price,
-                p.dimensions,
-                p.specifications,
-                p.weight,
                 p.discount,
                 p.product_description,
                 p.warranty,
+                p.product_series,
+                p.product_type,
                 p.created_at AS product_created_at,
                 p.updated_at AS product_updated_at,
                 c.category_name,
@@ -89,7 +84,6 @@ router.get("/wishlist/all-with-users", async (req, res) => {
             ORDER BY w.created_at DESC`
         );
 
-        // Get variants for each product - FIXED COLUMN NAMES
         for (const item of rows) {
             const [variants] = await db.execute(
                 `SELECT 
@@ -101,8 +95,8 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                     brand,
                     description,
                     spec_type,
-                    color as color_name,  -- Alias color as color_name
-                    color as color_hex,   -- Alias color as color_hex
+                    color as color_name,
+                    color as color_hex,
                     size,
                     price, 
                     availability,
@@ -116,7 +110,6 @@ router.get("/wishlist/all-with-users", async (req, res) => {
             item.variants = variants;
         }
 
-        // Group data by user
         const groupedData = rows.reduce((acc, item) => {
             const userId = item.user_id;
             if (!acc[userId]) {
@@ -132,7 +125,6 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                 };
             }
             
-            // Remove user fields from item to avoid duplication
             const { user_name, user_mobile, user_email, user_created_at, ...wishlistItem } = item;
             acc[userId].wishlist_items.push(wishlistItem);
             
@@ -173,12 +165,11 @@ router.get("/wishlist/:userId", async (req, res) => {
                 p.product_brand,
                 p.product_details_pdf,
                 p.price,
-                p.dimensions,
-                p.specifications,
-                p.weight,
                 p.discount,
                 p.product_description,
                 p.warranty,
+                p.product_series,
+                p.product_type,
                 p.created_at,
                 p.updated_at,
                 c.category_name
@@ -190,7 +181,6 @@ router.get("/wishlist/:userId", async (req, res) => {
             [userId]
         );
 
-        // Get variants for each product - FIXED COLUMN NAMES
         for (const product of rows) {
             const [variants] = await db.execute(
                 `SELECT 
@@ -202,8 +192,8 @@ router.get("/wishlist/:userId", async (req, res) => {
                     brand,
                     description,
                     spec_type,
-                    color as color_name,  -- Alias color as color_name
-                    color as color_hex,   -- Alias color as color_hex
+                    color as color_name,
+                    color as color_hex,
                     size,
                     price, 
                     availability,
@@ -235,9 +225,7 @@ router.get("/wishlist/:userId", async (req, res) => {
 // Check Wishlist
 // ========================================
 router.get("/wishlist/check/:userId/:productId", async (req, res) => {
-
     try {
-
         const { userId, productId } = req.params;
 
         const [rows] = await db.execute(
@@ -251,24 +239,18 @@ router.get("/wishlist/check/:userId/:productId", async (req, res) => {
         });
 
     } catch (err) {
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
-
 
 // ========================================
 // Wishlist Count
 // ========================================
 router.get("/wishlist/count/:userId", async (req, res) => {
-
     try {
-
         const { userId } = req.params;
 
         const [rows] = await db.execute(
@@ -282,24 +264,18 @@ router.get("/wishlist/count/:userId", async (req, res) => {
         });
 
     } catch (err) {
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
-
 
 // ========================================
 // Remove by Wishlist Id
 // ========================================
 router.delete("/wishlist/:wishlistId", async (req, res) => {
-
     try {
-
         const { wishlistId } = req.params;
 
         const [result] = await db.execute(
@@ -320,24 +296,18 @@ router.delete("/wishlist/:wishlistId", async (req, res) => {
         });
 
     } catch (err) {
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
-
 
 // ========================================
 // Remove by Product Id
 // ========================================
 router.delete("/wishlist/user/:userId/product/:productId", async (req, res) => {
-
     try {
-
         const { userId, productId } = req.params;
 
         const [result] = await db.execute(
@@ -358,14 +328,11 @@ router.delete("/wishlist/user/:userId/product/:productId", async (req, res) => {
         });
 
     } catch (err) {
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
 
 // ========================================
@@ -373,7 +340,6 @@ router.delete("/wishlist/user/:userId/product/:productId", async (req, res) => {
 // ========================================
 router.delete("/wishlist/clear/:userId", async (req, res) => {
     try {
-
         const { userId } = req.params;
 
         const [result] = await db.execute(
@@ -389,13 +355,11 @@ router.delete("/wishlist/clear/:userId", async (req, res) => {
 
     } catch (err) {
         console.error(err);
-
         res.status(500).json({
             success: false,
             message: err.message
         });
     }
 });
-
 
 module.exports = router;
