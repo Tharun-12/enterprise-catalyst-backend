@@ -16,6 +16,7 @@ const inquiryRoutes = require("./routes/inquiryRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
 const quotationRoutes = require("./routes/quotationRoutes");
 const specificationsRoutes = require("./routes/specificationsRoutes");
+const compareRoutes = require('./routes/compareRoutes');
 
 
 const app = express();
@@ -53,7 +54,7 @@ app.use("/api/users", userRoutes);
 app.use("/api", inquiryRoutes);
 app.use("/api", wishlistRoutes);
 app.use("/api", quotationRoutes);
-
+app.use('/api/compare', compareRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
