@@ -219,6 +219,35 @@ router.get("/count/:userId", async (req, res) => {
     }
 });
 
+
+// ========================================
+// Clear All Compare Items for a User
+// ========================================
+router.delete("/clear/:userId", async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        const [result] = await db.execute(
+            "DELETE FROM compare WHERE user_id = ?",
+            [userId]
+        );
+
+        res.status(200).json({
+            success: true,
+            message: "Compare list cleared successfully.",
+            deletedItems: result.affectedRows
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+});
+
+
 // ========================================
 // Remove Product from Compare by Product ID
 // ========================================
@@ -244,33 +273,6 @@ router.delete("/:userId/:productId", async (req, res) => {
         });
 
     } catch (err) {
-        res.status(500).json({
-            success: false,
-            message: err.message
-        });
-    }
-});
-
-// ========================================
-// Clear All Compare Items for a User
-// ========================================
-router.delete("/clear/:userId", async (req, res) => {
-    try {
-        const { userId } = req.params;
-
-        const [result] = await db.execute(
-            "DELETE FROM compare WHERE user_id = ?",
-            [userId]
-        );
-
-        res.status(200).json({
-            success: true,
-            message: "Compare list cleared successfully.",
-            deletedItems: result.affectedRows
-        });
-
-    } catch (err) {
-        console.error(err);
         res.status(500).json({
             success: false,
             message: err.message
