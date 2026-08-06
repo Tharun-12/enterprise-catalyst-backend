@@ -462,6 +462,84 @@ router.put("/:id", async (req, res) => {
     }
 });
 
+
+
+// Add this after the update user route (router.put("/:id", ...)) and before module.exports
+
+// Change password
+router.post("/change-password", async (req, res) => {
+    console.log('🔑 Change password request received');
+    
+    try {
+        const { userId, currentPassword, newPassword } = req.body;
+
+        // Validate input
+        if (!userId || !currentPassword || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: "All fields are required"
+            });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: "New password must be at least 6 characters"
+            });
+        }
+
+        // Get user by ID
+        const [users] = await db.query(
+            "SELECT id, password FROM users WHERE id = ?",
+            [userId]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        const user = users[0];
+
+        // Verify current password
+        const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+
+        if (!isPasswordValid) {
+            return res.status(401).json({
+                success: false,
+                message: "Current password is incorrect"
+            });
+        }
+
+        // Hash new password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+        // Update password
+        await db.query(
+            "UPDATE users SET password = ? WHERE id = ?",
+            [hashedPassword, userId]
+        );
+
+        console.log(`✅ Password changed successfully for user ID: ${userId}`);
+
+        res.json({
+            success: true,
+            message: "Password changed successfully"
+        });
+
+    } catch (error) {
+        console.error("Change password error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Internal server error",
+            error: error.message
+        });
+    }
+});
+
 // Delete user
 router.delete("/:id", async (req, res) => {
     try {

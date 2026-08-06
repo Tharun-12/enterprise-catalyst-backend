@@ -6,11 +6,14 @@ const db = require("../db");
 // Generate Quotation From Wishlist
 // POST /api/quotations/generate
 // =======================================================
+// =======================================================
+// Generate Quotation From Wishlist
+// POST /api/quotations/generate
+// =======================================================
 router.post("/quotations/generate", async (req, res) => {
     const connection = await db.getConnection();
 
     try {
-
         await connection.beginTransaction();
 
         const { user_id, remarks = "" } = req.body;
@@ -62,23 +65,23 @@ router.post("/quotations/generate", async (req, res) => {
         }
 
         let totalAmount = 0;
-        let totalDiscount = 0;
+        let totalDiscountAmount = 0;
         let grandTotal = 0;
 
         wishlist.forEach(item => {
-
             const price = Number(item.price);
-            const discount = Number(item.discount || 0);
+            const discountPercent = Number(item.discount || 0);
+            
+            // Calculate discount as percentage of price
+            const discountAmount = (price * discountPercent) / 100;
+            const finalPrice = price - discountAmount;
 
             totalAmount += price;
-            totalDiscount += discount;
-            grandTotal += (price - discount);
-
+            totalDiscountAmount += discountAmount;
+            grandTotal += finalPrice;
         });
 
-        const quotationNo =
-            "QT-" +
-            Date.now();
+        const quotationNo = "QT-" + Date.now();
 
         // Insert quotation
         const [quotation] = await connection.execute(
@@ -104,7 +107,7 @@ router.post("/quotations/generate", async (req, res) => {
                 user.email,
                 wishlist.length,
                 totalAmount,
-                totalDiscount,
+                totalDiscountAmount,
                 grandTotal,
                 remarks
             ]
@@ -114,9 +117,10 @@ router.post("/quotations/generate", async (req, res) => {
 
         // Insert quotation items
         for (const item of wishlist) {
-
             const price = Number(item.price);
-            const discount = Number(item.discount || 0);
+            const discountPercent = Number(item.discount || 0);
+            const discountAmount = (price * discountPercent) / 100;
+            const finalPrice = price - discountAmount;
 
             await connection.execute(
                 `INSERT INTO quotation_items
@@ -129,10 +133,11 @@ router.post("/quotations/generate", async (req, res) => {
                     quantity,
                     price,
                     discount,
+                    discount_amount,
                     final_price,
                     subtotal
                 )
-                VALUES (?,?,?,?,?,?,?,?,?,?)`,
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
                 [
                     quotationId,
                     item.product_id,
@@ -141,12 +146,12 @@ router.post("/quotations/generate", async (req, res) => {
                     item.product_brand,
                     1,
                     price,
-                    discount,
-                    price - discount,
-                    price - discount
+                    discountPercent,
+                    discountAmount,
+                    finalPrice,
+                    finalPrice
                 ]
             );
-
         }
 
         // Clear Wishlist
@@ -165,22 +170,21 @@ router.post("/quotations/generate", async (req, res) => {
         });
 
     } catch (err) {
-
         await connection.rollback();
-
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     } finally {
-
         connection.release();
-
     }
 });
 
 
+// =======================================================
+// Generate Single Product Quotation
+// POST /api/quotations/single
+// =======================================================
 // =======================================================
 // Generate Single Product Quotation
 // POST /api/quotations/single
@@ -284,10 +288,11 @@ router.post("/quotations/single", async (req, res) => {
             product = products[0];
         }
 
-        // Calculate amounts
+        // Calculate amounts - discount is percentage
         const priceNum = Number(product.price);
-        const discountNum = Number(product.discount || 0);
-        const finalPrice = priceNum - discountNum;
+        const discountPercent = Number(product.discount || 0);
+        const discountAmount = (priceNum * discountPercent) / 100;
+        const finalPrice = priceNum - discountAmount;
         const subtotal = finalPrice * quantity;
 
         // Generate quotation number
@@ -318,7 +323,7 @@ router.post("/quotations/single", async (req, res) => {
                 user.email,
                 1, // Single product
                 priceNum,
-                discountNum,
+                discountAmount,
                 finalPrice,
                 remarks || `Quotation requested for ${product.product_name}`,
                 'Pending'
@@ -339,10 +344,11 @@ router.post("/quotations/single", async (req, res) => {
                 quantity,
                 price,
                 discount,
+                discount_amount,
                 final_price,
                 subtotal
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
             [
                 quotationId,
                 product.id,
@@ -351,7 +357,8 @@ router.post("/quotations/single", async (req, res) => {
                 product.product_brand,
                 quantity,
                 priceNum,
-                discountNum,
+                discountPercent,
+                discountAmount,
                 finalPrice,
                 subtotal
             ]
