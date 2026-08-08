@@ -63,7 +63,7 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                 p.product_code,
                 p.product_brand,
                 p.product_details_pdf,
-                p.price,
+  
                 p.discount,
                 p.product_description,
                 p.warranty,
@@ -98,7 +98,7 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                     color as color_name,
                     color as color_hex,
                     size,
-                    price, 
+               
                     availability,
                     datasheet_url,
                     stock, 
@@ -164,7 +164,7 @@ router.get("/wishlist/:userId", async (req, res) => {
                 p.product_code,
                 p.product_brand,
                 p.product_details_pdf,
-                p.price,
+             
                 p.discount,
                 p.product_description,
                 p.warranty,
