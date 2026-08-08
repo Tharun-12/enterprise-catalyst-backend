@@ -7,8 +7,7 @@ const db = require("../db");
 router.get("/", async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT pb.id, pb.brand_name, pb.description, pb.product_series, pb.conductor_type, pb.cable_od, 
-              pb.jacket_material, pb.bandwidth, pb.operating_temperature, pb.poe_support,
+      `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
@@ -34,8 +33,7 @@ router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await db.query(
-      `SELECT pb.id, pb.brand_name, pb.description, pb.product_series, pb.conductor_type, pb.cable_od,
-              pb.jacket_material, pb.bandwidth, pb.operating_temperature, pb.poe_support,
+      `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
@@ -69,8 +67,7 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { 
-      brand_name, description, product_series, conductor_type, cable_od,
-      jacket_material, bandwidth, operating_temperature, poe_support,
+      brand_name, 
       category_id
     } = req.body;
 
@@ -116,30 +113,20 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Insert new brand with all fields
+    // Insert new brand
     const [result] = await db.query(
       `INSERT INTO product_brands 
-       (brand_name, description, product_series, conductor_type, cable_od, 
-        jacket_material, bandwidth, operating_temperature, poe_support, category_id) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (brand_name, category_id) 
+       VALUES (?, ?)`,
       [
         brand_name.trim(), 
-        description?.trim() || '',
-        product_series?.trim() || null,
-        conductor_type?.trim() || null,
-        cable_od?.trim() || null,
-        jacket_material?.trim() || null,
-        bandwidth?.trim() || null,
-        operating_temperature?.trim() || null,
-        poe_support?.trim() || null,
         category_id
       ]
     );
 
     // Get the newly created brand
     const [newBrand] = await db.query(
-      `SELECT pb.id, pb.brand_name, pb.description, pb.product_series, pb.conductor_type, pb.cable_od,
-              pb.jacket_material, pb.bandwidth, pb.operating_temperature, pb.poe_support,
+      `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
@@ -168,8 +155,7 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { 
-      brand_name, description, product_series, conductor_type, cable_od,
-      jacket_material, bandwidth, operating_temperature, poe_support,
+      brand_name, 
       category_id
     } = req.body;
 
@@ -228,30 +214,14 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Update brand with all fields
+    // Update brand
     await db.query(
       `UPDATE product_brands SET 
         brand_name = ?, 
-        description = ?,
-        product_series = ?,
-        conductor_type = ?,
-        cable_od = ?,
-        jacket_material = ?,
-        bandwidth = ?,
-        operating_temperature = ?,
-        poe_support = ?,
         category_id = ?
        WHERE id = ?`,
       [
         brand_name.trim(), 
-        description?.trim() || '',
-        product_series?.trim() || null,
-        conductor_type?.trim() || null,
-        cable_od?.trim() || null,
-        jacket_material?.trim() || null,
-        bandwidth?.trim() || null,
-        operating_temperature?.trim() || null,
-        poe_support?.trim() || null,
         category_id,
         id
       ]
@@ -259,8 +229,7 @@ router.put("/:id", async (req, res) => {
 
     // Get the updated brand
     const [updatedBrand] = await db.query(
-      `SELECT pb.id, pb.brand_name, pb.description, pb.product_series, pb.conductor_type, pb.cable_od,
-              pb.jacket_material, pb.bandwidth, pb.operating_temperature, pb.poe_support,
+      `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb

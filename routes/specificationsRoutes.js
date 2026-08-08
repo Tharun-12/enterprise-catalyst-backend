@@ -1,16 +1,66 @@
-// routes/specializationRoutes.js
+// routes/specificationsRoutes.js
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
-// Get all specializations with category info
+// Helper function to ensure brand exists in product_brands table
+const ensureBrandExists = async (brandName, categoryId) => {
+  try {
+    // Check if brand already exists
+    const [existingBrand] = await db.query(
+      "SELECT id FROM product_brands WHERE brand_name = ?",
+      [brandName.trim()]
+    );
+
+    if (existingBrand.length > 0) {
+      // Brand exists, return its id
+      return existingBrand[0].id;
+    }
+
+    // Brand doesn't exist, create it
+    const [result] = await db.query(
+      "INSERT INTO product_brands (brand_name, category_id) VALUES (?, ?)",
+      [brandName.trim(), categoryId]
+    );
+
+    console.log(`✅ New brand created: "${brandName}" with ID: ${result.insertId}`);
+    return result.insertId;
+  } catch (error) {
+    console.error(`Error ensuring brand exists for "${brandName}":`, error);
+    throw error;
+  }
+};
+
+// Process all brands in color_brand_mapping
+const processBrandsInMapping = async (colorBrandMapping, categoryId) => {
+  const processedMapping = {};
+  
+  for (const [color, brands] of Object.entries(colorBrandMapping)) {
+    processedMapping[color] = [];
+    for (const brandName of brands) {
+      try {
+        // Ensure brand exists in product_brands
+        await ensureBrandExists(brandName, categoryId);
+        processedMapping[color].push(brandName);
+      } catch (error) {
+        console.error(`Failed to process brand "${brandName}":`, error);
+        // Still add the brand name to the mapping even if creation fails
+        processedMapping[color].push(brandName);
+      }
+    }
+  }
+  
+  return processedMapping;
+};
+
+// Get all specifications with category info
 router.get("/", async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, s.spec_value, 
+      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
               s.color_brand_mapping,
               s.created_at, s.updated_at 
-       FROM specializations s
+       FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        ORDER BY s.spec_name ASC`
     );
@@ -26,24 +76,24 @@ router.get("/", async (req, res) => {
       data: parsedRows
     });
   } catch (error) {
-    console.error("Error fetching specializations:", error);
+    console.error("Error fetching specifications:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch specializations",
+      message: "Failed to fetch specifications",
       error: error.message
     });
   }
 });
 
-// Get a single specialization by ID
+// Get a single specification by ID
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, s.spec_value, 
+      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
               s.color_brand_mapping,
               s.created_at, s.updated_at 
-       FROM specializations s
+       FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        WHERE s.id = ?`,
       [id]
@@ -52,7 +102,7 @@ router.get("/:id", async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Specialization not found"
+        message: "Specification not found"
       });
     }
 
@@ -68,21 +118,23 @@ router.get("/:id", async (req, res) => {
       data: parsedRow
     });
   } catch (error) {
-    console.error("Error fetching specialization:", error);
+    console.error("Error fetching specification:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch specialization",
+      message: "Failed to fetch specification",
       error: error.message
     });
   }
 });
 
-// Create a new specialization
+// Create a new specification
 router.post("/", async (req, res) => {
   try {
     const { 
-      category_id, spec_name, spec_value, color_brand_mapping
+      category_id, spec_name, color_brand_mapping
     } = req.body;
+
+    console.log('Received data:', req.body);
 
     // Validate required fields
     if (!category_id) {
@@ -96,13 +148,6 @@ router.post("/", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Specification name is required"
-      });
-    }
-
-    if (!spec_value || !spec_value.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Specification value is required"
       });
     }
 
@@ -121,7 +166,7 @@ router.post("/", async (req, res) => {
 
     // Check if spec_name already exists for this category
     const [existingSpec] = await db.query(
-      "SELECT id FROM specializations WHERE spec_name = ? AND category_id = ?",
+      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ?",
       [spec_name.trim(), category_id]
     );
 
@@ -132,25 +177,36 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Insert new specialization
+    // Process brands to ensure they exist in product_brands
+    let processedMapping = color_brand_mapping || {};
+    if (Object.keys(processedMapping).length > 0) {
+      try {
+        processedMapping = await processBrandsInMapping(processedMapping, category_id);
+        console.log('✅ Processed brand mapping:', processedMapping);
+      } catch (error) {
+        console.error('Error processing brands:', error);
+        // Continue with original mapping if processing fails
+      }
+    }
+
+    // Insert new specification
     const [result] = await db.query(
-      `INSERT INTO specializations 
-       (category_id, spec_name, spec_value, color_brand_mapping) 
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO specifications 
+       (category_id, spec_name, color_brand_mapping) 
+       VALUES (?, ?, ?)`,
       [
         category_id,
         spec_name.trim(),
-        spec_value.trim(),
-        color_brand_mapping ? JSON.stringify(color_brand_mapping) : null
+        processedMapping ? JSON.stringify(processedMapping) : null
       ]
     );
 
-    // Get the newly created specialization
+    // Get the newly created specification
     const [newSpec] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, s.spec_value, 
+      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
               s.color_brand_mapping,
               s.created_at, s.updated_at 
-       FROM specializations s
+       FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        WHERE s.id = ?`,
       [result.insertId]
@@ -164,25 +220,25 @@ router.post("/", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Specialization created successfully",
+      message: "Specification created successfully",
       data: parsedSpec
     });
   } catch (error) {
-    console.error("Error creating specialization:", error);
+    console.error("Error creating specification:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to create specialization",
+      message: "Failed to create specification",
       error: error.message
     });
   }
 });
 
-// Update a specialization
+// Update a specification
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { 
-      category_id, spec_name, spec_value, color_brand_mapping
+      category_id, spec_name, color_brand_mapping
     } = req.body;
 
     // Validate required fields
@@ -200,23 +256,16 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    if (!spec_value || !spec_value.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Specification value is required"
-      });
-    }
-
-    // Check if specialization exists
+    // Check if specification exists
     const [spec] = await db.query(
-      "SELECT id FROM specializations WHERE id = ?",
+      "SELECT id FROM specifications WHERE id = ?",
       [id]
     );
 
     if (spec.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Specialization not found"
+        message: "Specification not found"
       });
     }
 
@@ -235,7 +284,7 @@ router.put("/:id", async (req, res) => {
 
     // Check if another spec has the same name (excluding current)
     const [existingSpec] = await db.query(
-      "SELECT id FROM specializations WHERE spec_name = ? AND category_id = ? AND id != ?",
+      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND id != ?",
       [spec_name.trim(), category_id, id]
     );
 
@@ -246,29 +295,39 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Update specialization
+    // Process brands to ensure they exist in product_brands
+    let processedMapping = color_brand_mapping || {};
+    if (Object.keys(processedMapping).length > 0) {
+      try {
+        processedMapping = await processBrandsInMapping(processedMapping, category_id);
+        console.log('✅ Processed brand mapping:', processedMapping);
+      } catch (error) {
+        console.error('Error processing brands:', error);
+        // Continue with original mapping if processing fails
+      }
+    }
+
+    // Update specification
     await db.query(
-      `UPDATE specializations SET 
+      `UPDATE specifications SET 
         category_id = ?,
         spec_name = ?,
-        spec_value = ?,
         color_brand_mapping = ?
        WHERE id = ?`,
       [
         category_id,
         spec_name.trim(),
-        spec_value.trim(),
-        color_brand_mapping ? JSON.stringify(color_brand_mapping) : null,
+        processedMapping ? JSON.stringify(processedMapping) : null,
         id
       ]
     );
 
-    // Get the updated specialization
+    // Get the updated specification
     const [updatedSpec] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, s.spec_value, 
+      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
               s.color_brand_mapping,
               s.created_at, s.updated_at 
-       FROM specializations s
+       FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        WHERE s.id = ?`,
       [id]
@@ -282,52 +341,52 @@ router.put("/:id", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Specialization updated successfully",
+      message: "Specification updated successfully",
       data: parsedSpec
     });
   } catch (error) {
-    console.error("Error updating specialization:", error);
+    console.error("Error updating specification:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to update specialization",
+      message: "Failed to update specification",
       error: error.message
     });
   }
 });
 
-// Delete a specialization
+// Delete a specification
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if specialization exists
+    // Check if specification exists
     const [spec] = await db.query(
-      "SELECT id, spec_name FROM specializations WHERE id = ?",
+      "SELECT id, spec_name FROM specifications WHERE id = ?",
       [id]
     );
 
     if (spec.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Specialization not found"
+        message: "Specification not found"
       });
     }
 
-    // Delete specialization
+    // Delete specification
     await db.query(
-      "DELETE FROM specializations WHERE id = ?",
+      "DELETE FROM specifications WHERE id = ?",
       [id]
     );
 
     res.json({
       success: true,
-      message: `Specialization "${spec[0].spec_name}" deleted successfully`
+      message: `Specification "${spec[0].spec_name}" deleted successfully`
     });
   } catch (error) {
-    console.error("Error deleting specialization:", error);
+    console.error("Error deleting specification:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to delete specialization",
+      message: "Failed to delete specification",
       error: error.message
     });
   }

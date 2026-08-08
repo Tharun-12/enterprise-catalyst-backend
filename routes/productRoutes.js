@@ -72,8 +72,7 @@ function uploadWithLogging(multerMiddleware, routeLabel) {
 // PRODUCT CRUD OPERATIONS
 // ============================================
 
-// CREATE PRODUCT - Updated (removed specifications)
-// CREATE PRODUCT - Updated (requires manual product_code)
+// CREATE PRODUCT
 router.post(
     "/",
     uploadWithLogging(upload.fields([{ name: "product_details_pdf", maxCount: 1 }]), "POST /api/products"),
@@ -84,15 +83,21 @@ router.post(
                 product_code,
                 product_category_id,
                 product_brand,
-                price,
+                min_price,
+                max_price,
                 discount,
                 product_description,
                 warranty,
                 product_series,
-                product_type
+                product_type,
+                conductor_type,
+                cable_od,
+                jacket_material,
+                bandwidth,
+                operating_temperature,
+                poe_support
             } = req.body;
 
-            // REQUIRE product_code - do NOT auto-generate
             if (!product_code) {
                 return res.status(400).json({
                     success: false,
@@ -111,24 +116,33 @@ router.post(
             const sql = `
                 INSERT INTO products (
                     product_name, product_code, product_category_id, product_brand,
-                    product_details_pdf, price,
+                    product_details_pdf, min_price, max_price,
                     discount, product_description, warranty,
-                    product_series, product_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    product_series, product_type,
+                    conductor_type, cable_od, jacket_material,
+                    bandwidth, operating_temperature, poe_support
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const [result] = await db.query(sql, [
                 product_name,
-                product_code, // Use the manually entered product_code
+                product_code,
                 finalCategoryId,
                 finalBrand,
                 pdfFile,
-                price || null,
+                min_price || null,
+                max_price || null,
                 discount || 0,
                 product_description || null,
                 warranty || null,
                 product_series || null,
-                product_type || null
+                product_type || null,
+                conductor_type || null,
+                cable_od || null,
+                jacket_material || null,
+                bandwidth || null,
+                operating_temperature || null,
+                poe_support || null
             ]);
 
             res.status(201).json({
@@ -139,7 +153,6 @@ router.post(
             });
         } catch (error) {
             console.error("Error in product creation:", error);
-            // Check for duplicate product_code error
             if (error.code === 'ER_DUP_ENTRY') {
                 return res.status(400).json({
                     success: false,
@@ -209,7 +222,7 @@ router.get("/products-with-variants/:id", async (req, res) => {
     }
 });
 
-// UPDATE PRODUCT - Updated (removed specifications)
+// UPDATE PRODUCT
 router.put(
     "/:id",
     uploadWithLogging(upload.fields([{ name: "product_details_pdf", maxCount: 1 }]), "PUT /api/products/:id"),
@@ -220,20 +233,25 @@ router.put(
                 product_code,
                 product_category_id,
                 product_brand,
-                price,
+                min_price,
+                max_price,
                 discount,
                 product_description,
                 warranty,
                 existing_pdf,
                 product_series,
-                product_type
+                product_type,
+                conductor_type,
+                cable_od,
+                jacket_material,
+                bandwidth,
+                operating_temperature,
+                poe_support
             } = req.body;
 
             let finalPdf = existing_pdf || "";
             
-            // Check if new PDF file was uploaded
             if (req.files && req.files["product_details_pdf"]) {
-                // If there's an existing PDF, delete it
                 if (existing_pdf) {
                     const oldPdfPath = path.join(pdfUploadDir, existing_pdf);
                     try {
@@ -247,7 +265,6 @@ router.put(
                 finalPdf = req.files["product_details_pdf"][0].filename;
             }
 
-            // Get existing product to preserve values if not provided
             const [existingProduct] = await db.query(
                 "SELECT product_code, product_category_id, product_brand FROM products WHERE id = ?",
                 [req.params.id]
@@ -268,9 +285,11 @@ router.put(
             const sql = `
                 UPDATE products SET
                     product_name=?, product_code=?, product_category_id=?,
-                    product_brand=?, product_details_pdf=?, price=?,
-                    discount=?, product_description=?, warranty=?,
-                    product_series=?, product_type=?
+                    product_brand=?, product_details_pdf=?, min_price=?,
+                    max_price=?, discount=?, product_description=?, warranty=?,
+                    product_series=?, product_type=?,
+                    conductor_type=?, cable_od=?, jacket_material=?,
+                    bandwidth=?, operating_temperature=?, poe_support=?
                 WHERE id=?
             `;
 
@@ -280,12 +299,19 @@ router.put(
                 finalCategoryId,
                 finalBrand,
                 finalPdf,
-                price || null,
+                min_price || null,
+                max_price || null,
                 discount || 0,
                 product_description || null,
                 warranty || null,
                 product_series || null,
                 product_type || null,
+                conductor_type || null,
+                cable_od || null,
+                jacket_material || null,
+                bandwidth || null,
+                operating_temperature || null,
+                poe_support || null,
                 req.params.id,
             ]);
 
@@ -302,7 +328,6 @@ router.delete("/:id", async (req, res) => {
     try {
         const productId = parseInt(req.params.id, 10);
 
-        // Get product PDF to delete from filesystem
         const [product] = await db.query(
             "SELECT product_details_pdf FROM products WHERE id = ?",
             [productId]
@@ -446,7 +471,6 @@ router.put(
             let imageUrl = existingVariant.image_url;
 
             if (req.files && req.files.length > 0) {
-                // Delete old image if exists
                 if (existingVariant.image_url) {
                     const oldImagePath = path.join(productUploadDir, path.basename(existingVariant.image_url));
                     try {
@@ -516,7 +540,6 @@ router.delete("/variants/:id", async (req, res) => {
     try {
         const variantId = parseInt(req.params.id, 10);
         
-        // Get image path to delete
         const [variant] = await db.query(
             "SELECT image_url FROM product_variants WHERE id = ?",
             [variantId]
@@ -574,14 +597,12 @@ router.post("/spec-comparison", async (req, res) => {
 
         console.log("Saving spec comparison:", req.body);
 
-        // Check if exists
         const [existing] = await db.query(
             "SELECT id FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
             [product_id, spec_type]
         );
 
         if (existing.length > 0) {
-            // Update
             await db.query(
                 `UPDATE spec_comparison SET
                     bandwidth = ?,
@@ -592,7 +613,6 @@ router.post("/spec-comparison", async (req, res) => {
                 [bandwidth, max_data_rate, internal_design, typical_applications, product_id, spec_type]
             );
         } else {
-            // Insert
             await db.query(
                 `INSERT INTO spec_comparison
                     (product_id, spec_type, bandwidth, max_data_rate, internal_design, typical_applications)
