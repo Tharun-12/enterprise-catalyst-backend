@@ -41,19 +41,20 @@ router.post("/quotations/generate", async (req, res) => {
 
         const user = users[0];
 
-        // Get Wishlist Products
+        // Get Wishlist Products - FIXED: Use min_price and max_price
         const [wishlist] = await connection.execute(`
             SELECT
                 w.product_id,
                 p.product_name,
                 p.product_code,
                 p.product_brand,
-                p.price,
+                p.min_price,
+                p.max_price,
                 p.discount
             FROM wishlist w
             INNER JOIN products p
-                ON p.id=w.product_id
-            WHERE w.user_id=?
+                ON p.id = w.product_id
+            WHERE w.user_id = ?
         `, [user_id]);
 
         if (wishlist.length === 0) {
@@ -69,7 +70,8 @@ router.post("/quotations/generate", async (req, res) => {
         let grandTotal = 0;
 
         wishlist.forEach(item => {
-            const price = Number(item.price);
+            // Use max_price if available, otherwise use min_price
+            let price = Number(item.max_price) || Number(item.min_price) || 0;
             const discountPercent = Number(item.discount || 0);
             
             // Calculate discount as percentage of price
@@ -117,7 +119,7 @@ router.post("/quotations/generate", async (req, res) => {
 
         // Insert quotation items
         for (const item of wishlist) {
-            const price = Number(item.price);
+            let price = Number(item.max_price) || Number(item.min_price) || 0;
             const discountPercent = Number(item.discount || 0);
             const discountAmount = (price * discountPercent) / 100;
             const finalPrice = price - discountAmount;
@@ -171,6 +173,7 @@ router.post("/quotations/generate", async (req, res) => {
 
     } catch (err) {
         await connection.rollback();
+        console.error('Error generating quotation:', err);
         res.status(500).json({
             success: false,
             message: err.message
@@ -253,7 +256,7 @@ router.post("/quotations/single", async (req, res) => {
             user = users[0];
         }
 
-        // Get Product if not provided
+        // Get Product if not provided - FIXED: Use min_price and max_price
         let product = null;
         if (product_name && product_code && product_brand && price !== undefined) {
             product = {
@@ -271,10 +274,11 @@ router.post("/quotations/single", async (req, res) => {
                     product_name,
                     product_code,
                     product_brand,
-                    price,
+                    min_price,
+                    max_price,
                     discount
                 FROM products 
-                WHERE id=?`,
+                WHERE id = ?`,
                 [product_id]
             );
 
@@ -289,7 +293,8 @@ router.post("/quotations/single", async (req, res) => {
         }
 
         // Calculate amounts - discount is percentage
-        const priceNum = Number(product.price);
+        // Use max_price if available, otherwise use min_price
+        let priceNum = Number(product.price) || Number(product.max_price) || Number(product.min_price) || 0;
         const discountPercent = Number(product.discount || 0);
         const discountAmount = (priceNum * discountPercent) / 100;
         const finalPrice = priceNum - discountAmount;
@@ -399,7 +404,6 @@ router.post("/quotations/single", async (req, res) => {
 // Get All Quotations with Items
 // GET /api/quotations
 // =======================================================
-
 router.get("/quotations", async (req, res) => {
     try {
         const [quotations] = await db.execute(`
@@ -420,7 +424,7 @@ router.get("/quotations", async (req, res) => {
                 );
                 return {
                     ...quotation,
-                    details: items  // Using 'details' key for consistency with frontend
+                    details: items
                 };
             })
         );
@@ -431,6 +435,7 @@ router.get("/quotations", async (req, res) => {
         });
 
     } catch (err) {
+        console.error('Error fetching quotations:', err);
         res.status(500).json({
             success: false,
             message: err.message
@@ -438,17 +443,12 @@ router.get("/quotations", async (req, res) => {
     }
 });
 
-
-
 // =======================================================
 // Get Single Quotation
 // GET /api/quotations/:id
 // =======================================================
-
 router.get("/quotations/:id", async (req, res) => {
-
     try {
-
         const { id } = req.params;
 
         const [quotation] = await db.execute(
@@ -457,12 +457,10 @@ router.get("/quotations/:id", async (req, res) => {
         );
 
         if (quotation.length === 0) {
-
             return res.status(404).json({
                 success: false,
                 message: "Quotation not found"
             });
-
         }
 
         const [items] = await db.execute(
@@ -479,23 +477,18 @@ router.get("/quotations/:id", async (req, res) => {
         });
 
     } catch (err) {
-
+        console.error('Error fetching quotation:', err);
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
-
-
 
 // =======================================================
 // Get User Quotations with Items
 // GET /api/quotations/user/:userId
 // =======================================================
-
 router.get("/quotations/user/:userId", async (req, res) => {
     try {
         const { userId } = req.params;
@@ -531,6 +524,7 @@ router.get("/quotations/user/:userId", async (req, res) => {
         });
 
     } catch (err) {
+        console.error('Error fetching user quotations:', err);
         res.status(500).json({
             success: false,
             message: err.message
@@ -538,27 +532,20 @@ router.get("/quotations/user/:userId", async (req, res) => {
     }
 });
 
-
-
 // =======================================================
 // Update Status
 // PUT /api/quotations/:id/status
 // =======================================================
-
 router.put("/quotations/:id/status", async (req, res) => {
-
     try {
-
         const { id } = req.params;
         const { status } = req.body;
 
         if (!["Pending", "Approved", "Rejected"].includes(status)) {
-
             return res.status(400).json({
                 success: false,
                 message: "Invalid status."
             });
-
         }
 
         const [result] = await db.execute(
@@ -567,12 +554,10 @@ router.put("/quotations/:id/status", async (req, res) => {
         );
 
         if (result.affectedRows === 0) {
-
             return res.status(404).json({
                 success: false,
                 message: "Quotation not found."
             });
-
         }
 
         res.json({
@@ -581,14 +566,12 @@ router.put("/quotations/:id/status", async (req, res) => {
         });
 
     } catch (err) {
-
+        console.error('Error updating quotation status:', err);
         res.status(500).json({
             success: false,
             message: err.message
         });
-
     }
-
 });
 
 module.exports = router;
