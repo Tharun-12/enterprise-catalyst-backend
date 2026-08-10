@@ -16,9 +16,9 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Check if product exists
+        // Get product details including product_type
         const [productCheck] = await db.execute(
-            "SELECT id FROM products WHERE id = ?",
+            "SELECT id, product_type FROM products WHERE id = ?",
             [product_id]
         );
 
@@ -28,6 +28,8 @@ router.post("/", async (req, res) => {
                 message: "Product not found."
             });
         }
+
+        const productType = productCheck[0].product_type;
 
         // Check if product already exists in compare list
         const [exists] = await db.execute(
@@ -40,6 +42,22 @@ router.post("/", async (req, res) => {
                 success: false,
                 message: "Product already exists in compare list."
             });
+        }
+
+        // Check if user has any products in compare and get their product_type
+        const [existingCompare] = await db.execute(
+            "SELECT product_type FROM compare WHERE user_id = ? LIMIT 1",
+            [user_id]
+        );
+
+        if (existingCompare.length > 0) {
+            const existingType = existingCompare[0].product_type;
+            if (existingType !== productType) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Cannot compare different product types. Existing: ${existingType}, New: ${productType}`
+                });
+            }
         }
 
         // Check if user has reached max limit (4 products)
@@ -55,10 +73,10 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Insert into compare table
+        // Insert into compare table with product_type
         const [result] = await db.execute(
-            "INSERT INTO compare (user_id, product_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
-            [user_id, product_id]
+            "INSERT INTO compare (user_id, product_id, product_type, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
+            [user_id, product_id, productType]
         );
 
         // Get the inserted record
@@ -96,11 +114,12 @@ router.get("/:userId", async (req, res) => {
             });
         }
 
-        // Modified query - removed p.price and p.discount since they don't exist
+        // Modified query to include product_type from compare table
         const [rows] = await db.execute(
             `SELECT
                 c.id AS compare_id,
                 c.user_id,
+                c.product_type AS compare_product_type,
                 c.created_at AS compare_created_at,
                 c.updated_at AS compare_updated_at,
                 p.id AS product_id,
@@ -117,6 +136,7 @@ router.get("/:userId", async (req, res) => {
                 p.updated_at AS product_updated_at,
                 p.min_price,
                 p.max_price,
+                p.discount,
                 p.conductor_type,
                 p.cable_od,
                 p.jacket_material,
@@ -319,6 +339,37 @@ router.post("/bulk", async (req, res) => {
         await connection.beginTransaction();
 
         try {
+            // Get product types for all products
+            const placeholders = product_ids.map(() => '?').join(',');
+            const [products] = await connection.execute(
+                `SELECT id, product_type FROM products WHERE id IN (${placeholders})`,
+                product_ids
+            );
+
+            if (products.length === 0) {
+                await connection.rollback();
+                connection.release();
+                return res.status(404).json({
+                    success: false,
+                    message: "No valid products found."
+                });
+            }
+
+            // Check if all products have the same product_type
+            const productTypes = products.map(p => p.product_type);
+            const uniqueTypes = [...new Set(productTypes)];
+            
+            if (uniqueTypes.length > 1) {
+                await connection.rollback();
+                connection.release();
+                return res.status(400).json({
+                    success: false,
+                    message: `Cannot compare products with different types: ${uniqueTypes.join(', ')}`
+                });
+            }
+
+            const productType = uniqueTypes[0];
+
             // Clear existing compare items for user
             await connection.execute(
                 "DELETE FROM compare WHERE user_id = ?",
@@ -327,20 +378,12 @@ router.post("/bulk", async (req, res) => {
 
             // Add new compare items
             const addedProducts = [];
-            for (const productId of product_ids) {
-                // Check if product exists
-                const [productCheck] = await connection.execute(
-                    "SELECT id FROM products WHERE id = ?",
-                    [productId]
+            for (const product of products) {
+                await connection.execute(
+                    "INSERT INTO compare (user_id, product_id, product_type, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
+                    [user_id, product.id, productType]
                 );
-
-                if (productCheck.length > 0) {
-                    await connection.execute(
-                        "INSERT INTO compare (user_id, product_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
-                        [user_id, productId]
-                    );
-                    addedProducts.push(productId);
-                }
+                addedProducts.push(product.id);
             }
 
             await connection.commit();
