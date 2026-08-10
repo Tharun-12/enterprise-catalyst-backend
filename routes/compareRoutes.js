@@ -96,7 +96,7 @@ router.get("/:userId", async (req, res) => {
             });
         }
 
-        // Only select columns that exist in your products table
+        // Modified query - removed p.price and p.discount since they don't exist
         const [rows] = await db.execute(
             `SELECT
                 c.id AS compare_id,
@@ -109,14 +109,20 @@ router.get("/:userId", async (req, res) => {
                 p.product_category_id,
                 p.product_brand,
                 p.product_details_pdf,
-                p.price,
-                p.discount,
                 p.product_description,
                 p.warranty,
                 p.product_series,
                 p.product_type,
                 p.created_at AS product_created_at,
                 p.updated_at AS product_updated_at,
+                p.min_price,
+                p.max_price,
+                p.conductor_type,
+                p.cable_od,
+                p.jacket_material,
+                p.bandwidth,
+                p.operating_temperature,
+                p.poe_support,
                 cat.category_name
             FROM compare c
             INNER JOIN products p ON c.product_id = p.id
@@ -152,6 +158,15 @@ router.get("/:userId", async (req, res) => {
                 [product.product_id]
             );
             product.variants = variants;
+            
+            // Calculate min and max price from variants if min_price/max_price are null
+            if (variants.length > 0) {
+                const prices = variants.map(v => parseFloat(v.price)).filter(p => !isNaN(p));
+                if (prices.length > 0) {
+                    product.min_price = Math.min(...prices).toFixed(2);
+                    product.max_price = Math.max(...prices).toFixed(2);
+                }
+            }
         }
 
         res.json({
@@ -219,7 +234,6 @@ router.get("/count/:userId", async (req, res) => {
     }
 });
 
-
 // ========================================
 // Clear All Compare Items for a User
 // ========================================
@@ -246,7 +260,6 @@ router.delete("/clear/:userId", async (req, res) => {
         });
     }
 });
-
 
 // ========================================
 // Remove Product from Compare by Product ID
