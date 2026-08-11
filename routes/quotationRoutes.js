@@ -1,11 +1,9 @@
+// quotationRoutes.js - Fixed without JSON_ARRAYAGG
+
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
-// =======================================================
-// Generate Quotation From Wishlist
-// POST /api/quotations/generate
-// =======================================================
 // =======================================================
 // Generate Quotation From Wishlist
 // POST /api/quotations/generate
@@ -41,7 +39,7 @@ router.post("/quotations/generate", async (req, res) => {
 
         const user = users[0];
 
-        // Get Wishlist Products - FIXED: Use min_price and max_price
+        // Get Wishlist Products (without JSON_ARRAYAGG)
         const [wishlist] = await connection.execute(`
             SELECT
                 w.product_id,
@@ -65,11 +63,38 @@ router.post("/quotations/generate", async (req, res) => {
             });
         }
 
+        // Get variants for each product separately
+        const wishlistWithVariants = [];
+        for (const item of wishlist) {
+            const [variants] = await connection.execute(
+                `SELECT 
+                    id,
+                    variant_name,
+                    part_code,
+                    spec_type,
+                    color,
+                    size,
+                    price,
+                    image_url,
+                    stock
+                FROM product_variants 
+                WHERE product_id = ?
+                ORDER BY id`,
+                [item.product_id]
+            );
+            
+            wishlistWithVariants.push({
+                ...item,
+                variants: variants
+            });
+        }
+
         let totalAmount = 0;
         let totalDiscountAmount = 0;
         let grandTotal = 0;
 
-        wishlist.forEach(item => {
+        // Process each wishlist item
+        for (const item of wishlistWithVariants) {
             // Use max_price if available, otherwise use min_price
             let price = Number(item.max_price) || Number(item.min_price) || 0;
             const discountPercent = Number(item.discount || 0);
@@ -81,7 +106,7 @@ router.post("/quotations/generate", async (req, res) => {
             totalAmount += price;
             totalDiscountAmount += discountAmount;
             grandTotal += finalPrice;
-        });
+        }
 
         const quotationNo = "QT-" + Date.now();
 
@@ -107,7 +132,7 @@ router.post("/quotations/generate", async (req, res) => {
                 user.name,
                 user.mobile,
                 user.email,
-                wishlist.length,
+                wishlistWithVariants.length,
                 totalAmount,
                 totalDiscountAmount,
                 grandTotal,
@@ -117,12 +142,23 @@ router.post("/quotations/generate", async (req, res) => {
 
         const quotationId = quotation.insertId;
 
-        // Insert quotation items
-        for (const item of wishlist) {
+        // Insert quotation items with variant details
+        for (const item of wishlistWithVariants) {
             let price = Number(item.max_price) || Number(item.min_price) || 0;
             const discountPercent = Number(item.discount || 0);
             const discountAmount = (price * discountPercent) / 100;
             const finalPrice = price - discountAmount;
+
+            // Get first variant image if exists
+            let variantImage = null;
+            let variantDetails = null;
+            
+            if (item.variants && item.variants.length > 0) {
+                // Get the first variant's image
+                variantImage = item.variants[0].image_url || null;
+                // Store all variant details as JSON
+                variantDetails = JSON.stringify(item.variants);
+            }
 
             await connection.execute(
                 `INSERT INTO quotation_items
@@ -134,12 +170,16 @@ router.post("/quotations/generate", async (req, res) => {
                     brand,
                     quantity,
                     price,
+                    min_price,
+                    max_price,
                     discount,
                     discount_amount,
                     final_price,
-                    subtotal
+                    subtotal,
+                    variant_image,
+                    variant_details
                 )
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 [
                     quotationId,
                     item.product_id,
@@ -148,10 +188,14 @@ router.post("/quotations/generate", async (req, res) => {
                     item.product_brand,
                     1,
                     price,
+                    item.min_price || null,
+                    item.max_price || null,
                     discountPercent,
                     discountAmount,
                     finalPrice,
-                    finalPrice
+                    finalPrice,
+                    variantImage,
+                    variantDetails
                 ]
             );
         }
@@ -183,15 +227,6 @@ router.post("/quotations/generate", async (req, res) => {
     }
 });
 
-
-// =======================================================
-// Generate Single Product Quotation
-// POST /api/quotations/single
-// =======================================================
-// =======================================================
-// Generate Single Product Quotation
-// POST /api/quotations/single
-// =======================================================
 // =======================================================
 // Generate Single Product Quotation
 // POST /api/quotations/single
@@ -209,12 +244,16 @@ router.post("/quotations/single", async (req, res) => {
             product_code,
             product_brand,
             price,
+            min_price,
+            max_price,
             discount = 0,
             quantity = 1, 
             remarks = "",
             customer_name,
             customer_mobile,
-            customer_email
+            customer_email,
+            variant_image,
+            variant_details
         } = req.body;
 
         // Validate required fields
@@ -256,8 +295,10 @@ router.post("/quotations/single", async (req, res) => {
             user = users[0];
         }
 
-        // Get Product if not provided - FIXED: Use min_price and max_price
+        // Get Product if not provided
         let product = null;
+        let productVariants = null;
+        
         if (product_name && product_code && product_brand && price !== undefined) {
             product = {
                 id: product_id,
@@ -265,20 +306,23 @@ router.post("/quotations/single", async (req, res) => {
                 product_code: product_code,
                 product_brand: product_brand,
                 price: price,
+                min_price: min_price || null,
+                max_price: max_price || null,
                 discount: discount
             };
         } else {
+            // Get product details
             const [products] = await connection.execute(
                 `SELECT 
-                    id,
-                    product_name,
-                    product_code,
-                    product_brand,
-                    min_price,
-                    max_price,
-                    discount
-                FROM products 
-                WHERE id = ?`,
+                    p.id,
+                    p.product_name,
+                    p.product_code,
+                    p.product_brand,
+                    p.min_price,
+                    p.max_price,
+                    p.discount
+                FROM products p
+                WHERE p.id = ?`,
                 [product_id]
             );
 
@@ -290,6 +334,25 @@ router.post("/quotations/single", async (req, res) => {
                 });
             }
             product = products[0];
+
+            // Get variants separately
+            const [variants] = await connection.execute(
+                `SELECT 
+                    id,
+                    variant_name,
+                    part_code,
+                    spec_type,
+                    color,
+                    size,
+                    price,
+                    image_url,
+                    stock
+                FROM product_variants 
+                WHERE product_id = ?
+                ORDER BY id`,
+                [product_id]
+            );
+            productVariants = variants;
         }
 
         // Calculate amounts - discount is percentage
@@ -299,6 +362,15 @@ router.post("/quotations/single", async (req, res) => {
         const discountAmount = (priceNum * discountPercent) / 100;
         const finalPrice = priceNum - discountAmount;
         const subtotal = finalPrice * quantity;
+
+        // Get variant image if not provided
+        let finalVariantImage = variant_image || null;
+        let finalVariantDetails = variant_details || null;
+        
+        if (!finalVariantImage && productVariants && productVariants.length > 0) {
+            finalVariantImage = productVariants[0].image_url || null;
+            finalVariantDetails = JSON.stringify(productVariants);
+        }
 
         // Generate quotation number
         const quotationNo = "QT-" + Date.now() + "-S";
@@ -337,7 +409,7 @@ router.post("/quotations/single", async (req, res) => {
 
         const quotationId = quotation.insertId;
 
-        // Insert quotation item
+        // Insert quotation item with min_price, max_price, and variant image
         await connection.execute(
             `INSERT INTO quotation_items
             (
@@ -348,12 +420,16 @@ router.post("/quotations/single", async (req, res) => {
                 brand,
                 quantity,
                 price,
+                min_price,
+                max_price,
                 discount,
                 discount_amount,
                 final_price,
-                subtotal
+                subtotal,
+                variant_image,
+                variant_details
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             [
                 quotationId,
                 product.id,
@@ -362,10 +438,14 @@ router.post("/quotations/single", async (req, res) => {
                 product.product_brand,
                 quantity,
                 priceNum,
+                product.min_price || null,
+                product.max_price || null,
                 discountPercent,
                 discountAmount,
                 finalPrice,
-                subtotal
+                subtotal,
+                finalVariantImage,
+                finalVariantDetails
             ]
         );
 
@@ -513,7 +593,7 @@ router.get("/quotations/user/:userId", async (req, res) => {
                 );
                 return {
                     ...quotation,
-                    details: items  // Using 'details' key for consistency with frontend
+                    details: items
                 };
             })
         );
