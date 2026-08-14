@@ -8,18 +8,31 @@ const db = require("../db");
 // Generate Quotation From Wishlist
 // POST /api/quotations/generate
 // =======================================================
-router.post("/quotations/generate", async (req, res) => {
+// quotationRoutes.js - Add this new route
+
+// =======================================================
+// Generate Quotation From Wishlist (with selected products)
+// POST /api/quotations/generate-from-wishlist
+// =======================================================
+router.post("/quotations/generate-from-wishlist", async (req, res) => {
     const connection = await db.getConnection();
 
     try {
         await connection.beginTransaction();
 
-        const { user_id, remarks = "" } = req.body;
+        const { user_id, products, remarks = "" } = req.body;
 
         if (!user_id) {
             return res.status(400).json({
                 success: false,
                 message: "user_id is required"
+            });
+        }
+
+        if (!products || products.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "No products selected"
             });
         }
 
@@ -39,33 +52,57 @@ router.post("/quotations/generate", async (req, res) => {
 
         const user = users[0];
 
-        // Get Wishlist Products (without JSON_ARRAYAGG)
-        const [wishlist] = await connection.execute(`
-            SELECT
-                w.product_id,
-                p.product_name,
-                p.product_code,
-                p.product_brand,
-                p.min_price,
-                p.max_price,
-                p.discount
-            FROM wishlist w
-            INNER JOIN products p
-                ON p.id = w.product_id
-            WHERE w.user_id = ?
-        `, [user_id]);
+        let totalAmount = 0;
+        let totalDiscountAmount = 0;
+        let grandTotal = 0;
+        let totalItems = 0;
 
-        if (wishlist.length === 0) {
-            await connection.rollback();
-            return res.status(400).json({
-                success: false,
-                message: "Wishlist is empty."
-            });
-        }
+        const quotationNo = "QT-" + Date.now() + "-W";
 
-        // Get variants for each product separately
-        const wishlistWithVariants = [];
-        for (const item of wishlist) {
+        // Insert quotation
+        const [quotation] = await connection.execute(
+            `INSERT INTO quotations
+            (
+                quotation_no,
+                user_id,
+                customer_name,
+                customer_mobile,
+                customer_email,
+                total_items,
+                total_amount,
+                total_discount,
+                grand_total,
+                remarks,
+                status
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            [
+                quotationNo,
+                user_id,
+                user.name,
+                user.mobile,
+                user.email,
+                0, // Will update later
+                0,
+                0,
+                0,
+                remarks || `Quotation for ${products.length} selected wishlist items`,
+                'Pending'
+            ]
+        );
+
+        const quotationId = quotation.insertId;
+
+        // Process each selected product
+        for (const item of products) {
+            let price = Number(item.price) || 0;
+            const discountPercent = Number(item.discount || 0);
+            const discountAmount = (price * discountPercent) / 100;
+            const finalPrice = price - discountAmount;
+            const quantity = Number(item.quantity) || 1;
+            const subtotal = finalPrice * quantity;
+
+            // Get product variants
             const [variants] = await connection.execute(
                 `SELECT 
                     id,
@@ -82,82 +119,13 @@ router.post("/quotations/generate", async (req, res) => {
                 ORDER BY id`,
                 [item.product_id]
             );
-            
-            wishlistWithVariants.push({
-                ...item,
-                variants: variants
-            });
-        }
 
-        let totalAmount = 0;
-        let totalDiscountAmount = 0;
-        let grandTotal = 0;
-
-        // Process each wishlist item
-        for (const item of wishlistWithVariants) {
-            // Use max_price if available, otherwise use min_price
-            let price = Number(item.max_price) || Number(item.min_price) || 0;
-            const discountPercent = Number(item.discount || 0);
-            
-            // Calculate discount as percentage of price
-            const discountAmount = (price * discountPercent) / 100;
-            const finalPrice = price - discountAmount;
-
-            totalAmount += price;
-            totalDiscountAmount += discountAmount;
-            grandTotal += finalPrice;
-        }
-
-        const quotationNo = "QT-" + Date.now();
-
-        // Insert quotation
-        const [quotation] = await connection.execute(
-            `INSERT INTO quotations
-            (
-                quotation_no,
-                user_id,
-                customer_name,
-                customer_mobile,
-                customer_email,
-                total_items,
-                total_amount,
-                total_discount,
-                grand_total,
-                remarks
-            )
-            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-            [
-                quotationNo,
-                user_id,
-                user.name,
-                user.mobile,
-                user.email,
-                wishlistWithVariants.length,
-                totalAmount,
-                totalDiscountAmount,
-                grandTotal,
-                remarks
-            ]
-        );
-
-        const quotationId = quotation.insertId;
-
-        // Insert quotation items with variant details
-        for (const item of wishlistWithVariants) {
-            let price = Number(item.max_price) || Number(item.min_price) || 0;
-            const discountPercent = Number(item.discount || 0);
-            const discountAmount = (price * discountPercent) / 100;
-            const finalPrice = price - discountAmount;
-
-            // Get first variant image if exists
             let variantImage = null;
             let variantDetails = null;
             
-            if (item.variants && item.variants.length > 0) {
-                // Get the first variant's image
-                variantImage = item.variants[0].image_url || null;
-                // Store all variant details as JSON
-                variantDetails = JSON.stringify(item.variants);
+            if (variants && variants.length > 0) {
+                variantImage = variants[0].image_url || null;
+                variantDetails = JSON.stringify(variants);
             }
 
             await connection.execute(
@@ -186,24 +154,37 @@ router.post("/quotations/generate", async (req, res) => {
                     item.product_name,
                     item.product_code,
                     item.product_brand,
-                    1,
+                    quantity,
                     price,
                     item.min_price || null,
                     item.max_price || null,
                     discountPercent,
                     discountAmount,
                     finalPrice,
-                    finalPrice,
+                    subtotal,
                     variantImage,
                     variantDetails
                 ]
             );
+
+            totalAmount += price * quantity;
+            totalDiscountAmount += discountAmount * quantity;
+            grandTotal += finalPrice * quantity;
+            totalItems += quantity;
+
+            // Remove from wishlist
+            await connection.execute(
+                "DELETE FROM wishlist WHERE user_id=? AND product_id=?",
+                [user_id, item.product_id]
+            );
         }
 
-        // Clear Wishlist
+        // Update quotation with totals
         await connection.execute(
-            "DELETE FROM wishlist WHERE user_id=?",
-            [user_id]
+            `UPDATE quotations 
+            SET total_items = ?, total_amount = ?, total_discount = ?, grand_total = ?
+            WHERE id = ?`,
+            [totalItems, totalAmount, totalDiscountAmount, grandTotal, quotationId]
         );
 
         await connection.commit();
@@ -212,12 +193,14 @@ router.post("/quotations/generate", async (req, res) => {
             success: true,
             message: "Quotation generated successfully.",
             quotation_id: quotationId,
-            quotation_no: quotationNo
+            quotation_no: quotationNo,
+            total_items: totalItems,
+            grand_total: grandTotal
         });
 
     } catch (err) {
         await connection.rollback();
-        console.error('Error generating quotation:', err);
+        console.error('Error generating quotation from wishlist:', err);
         res.status(500).json({
             success: false,
             message: err.message
