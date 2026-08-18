@@ -87,9 +87,9 @@ router.post(
                 max_price,
                 discount,
                 product_description,
+                extra_information,
                 warranty,
                 product_series,
-                product_type,
                 conductor_type,
                 cable_od,
                 jacket_material,
@@ -117,8 +117,8 @@ router.post(
                 INSERT INTO products (
                     product_name, product_code, product_category_id, product_brand,
                     product_details_pdf, min_price, max_price,
-                    discount, product_description, warranty,
-                    product_series, product_type,
+                    discount, product_description, extra_information, warranty,
+                    product_series,
                     conductor_type, cable_od, jacket_material,
                     bandwidth, operating_temperature, poe_support
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -134,9 +134,9 @@ router.post(
                 max_price || null,
                 discount || 0,
                 product_description || null,
+                extra_information || null,
                 warranty || null,
                 product_series || null,
-                product_type || null,
                 conductor_type || null,
                 cable_od || null,
                 jacket_material || null,
@@ -237,10 +237,10 @@ router.put(
                 max_price,
                 discount,
                 product_description,
+                extra_information,
                 warranty,
                 existing_pdf,
                 product_series,
-                product_type,
                 conductor_type,
                 cable_od,
                 jacket_material,
@@ -286,8 +286,8 @@ router.put(
                 UPDATE products SET
                     product_name=?, product_code=?, product_category_id=?,
                     product_brand=?, product_details_pdf=?, min_price=?,
-                    max_price=?, discount=?, product_description=?, warranty=?,
-                    product_series=?, product_type=?,
+                    max_price=?, discount=?, product_description=?, extra_information=?, warranty=?,
+                    product_series=?,
                     conductor_type=?, cable_od=?, jacket_material=?,
                     bandwidth=?, operating_temperature=?, poe_support=?
                 WHERE id=?
@@ -303,9 +303,9 @@ router.put(
                 max_price || null,
                 discount || 0,
                 product_description || null,
+                extra_information || null,
                 warranty || null,
                 product_series || null,
-                product_type || null,
                 conductor_type || null,
                 cable_od || null,
                 jacket_material || null,
@@ -370,6 +370,7 @@ router.post(
                 variant_name,
                 part_code,
                 category,
+                sub_category,
                 brand,
                 description,
                 spec_type,
@@ -396,10 +397,10 @@ router.post(
 
             const insertSql = `
                 INSERT INTO product_variants (
-                    product_id, variant_name, part_code, category, brand,
+                    product_id, variant_name, part_code, category, sub_category, brand,
                     description, spec_type, color, size, price,
                     availability, datasheet_url, image_url, stock
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const [insertResult] = await db.query(insertSql, [
@@ -407,6 +408,7 @@ router.post(
                 variant_name,
                 part_code,
                 category || null,
+                sub_category || null,
                 brand,
                 description || null,
                 spec_type || null,
@@ -444,6 +446,7 @@ router.put(
                 variant_name,
                 part_code,
                 category,
+                sub_category,
                 brand,
                 description,
                 spec_type,
@@ -492,6 +495,7 @@ router.put(
                     variant_name = ?,
                     part_code = ?,
                     category = ?,
+                    sub_category = ?,
                     brand = ?,
                     description = ?,
                     spec_type = ?,
@@ -510,6 +514,7 @@ router.put(
                 variant_name || existingVariant.variant_name,
                 part_code || existingVariant.part_code,
                 category !== undefined ? category : existingVariant.category,
+                sub_category !== undefined ? sub_category : existingVariant.sub_category,
                 brand || existingVariant.brand,
                 description !== undefined ? description : existingVariant.description,
                 spec_type !== undefined ? spec_type : existingVariant.spec_type,
@@ -597,34 +602,79 @@ router.post("/spec-comparison", async (req, res) => {
 
         console.log("Saving spec comparison:", req.body);
 
+        // Check if spec_type exists and is valid
+        if (!spec_type || spec_type.trim() === '') {
+            return res.status(400).json({
+                success: false,
+                error: "Spec type is required"
+            });
+        }
+
+        // Trim and clean the spec_type
+        const cleanSpecType = spec_type.trim();
+
+        // Check if a record already exists for this product and spec_type
         const [existing] = await db.query(
             "SELECT id FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
-            [product_id, spec_type]
+            [product_id, cleanSpecType]
         );
 
+        let result;
         if (existing.length > 0) {
-            await db.query(
+            // Update existing record
+            [result] = await db.query(
                 `UPDATE spec_comparison SET
                     bandwidth = ?,
                     max_data_rate = ?,
                     internal_design = ?,
                     typical_applications = ?
                 WHERE product_id = ? AND spec_type = ?`,
-                [bandwidth, max_data_rate, internal_design, typical_applications, product_id, spec_type]
+                [
+                    bandwidth || null,
+                    max_data_rate || null,
+                    internal_design || null,
+                    typical_applications || null,
+                    product_id,
+                    cleanSpecType
+                ]
             );
         } else {
-            await db.query(
+            // Insert new record
+            [result] = await db.query(
                 `INSERT INTO spec_comparison
                     (product_id, spec_type, bandwidth, max_data_rate, internal_design, typical_applications)
                  VALUES (?, ?, ?, ?, ?, ?)`,
-                [product_id, spec_type, bandwidth, max_data_rate, internal_design, typical_applications]
+                [
+                    product_id,
+                    cleanSpecType,
+                    bandwidth || null,
+                    max_data_rate || null,
+                    internal_design || null,
+                    typical_applications || null
+                ]
             );
         }
 
-        res.json({ success: true, message: "Spec comparison saved successfully" });
+        res.json({
+            success: true,
+            message: "Spec comparison saved successfully",
+            id: result.insertId || existing[0]?.id
+        });
     } catch (error) {
         console.error("Error saving spec comparison:", error);
-        res.status(500).json({ error: error.message });
+        
+        // Handle duplicate entry error specifically
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({
+                success: false,
+                error: "A spec comparison for this product and spec type already exists. Please update the existing one instead."
+            });
+        }
+        
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
@@ -654,9 +704,13 @@ router.delete("/spec-comparison/:productId/:specType", async (req, res) => {
     try {
         const productId = parseInt(req.params.productId, 10);
         const { specType } = req.params;
+        
+        // Decode the spec type from URL
+        const decodedSpecType = decodeURIComponent(specType);
+        
         await db.query(
             "DELETE FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
-            [productId, specType]
+            [productId, decodedSpecType]
         );
         res.json({ success: true, message: "Spec comparison deleted successfully" });
     } catch (error) {

@@ -637,4 +637,149 @@ router.put("/quotations/:id/status", async (req, res) => {
     }
 });
 
+
+
+// =======================================================
+// Update Quotation Item Quantity
+// PUT /api/quotations/update-quantity
+// =======================================================
+router.put("/quotations/update-quantity", async (req, res) => {
+    const connection = await db.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        const { user_id, quotation_id, item_id, quantity } = req.body;
+
+        // Validate required fields
+        if (!user_id || !quotation_id || !item_id || !quantity) {
+            return res.status(400).json({
+                success: false,
+                message: "user_id, quotation_id, item_id, and quantity are required"
+            });
+        }
+
+        if (quantity < 1) {
+            return res.status(400).json({
+                success: false,
+                message: "Quantity must be at least 1"
+            });
+        }
+
+        // Verify the quotation belongs to the user
+        const [quotations] = await connection.execute(
+            "SELECT * FROM quotations WHERE id = ? AND user_id = ?",
+            [quotation_id, user_id]
+        );
+
+        if (quotations.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: "Quotation not found or does not belong to this user"
+            });
+        }
+
+        const quotation = quotations[0];
+
+        // Check if quotation is pending (only allow editing pending quotations)
+        if (quotation.status !== 'Pending') {
+            await connection.rollback();
+            return res.status(400).json({
+                success: false,
+                message: "Only pending quotations can be modified"
+            });
+        }
+
+        // Get the current item
+        const [items] = await connection.execute(
+            "SELECT * FROM quotation_items WHERE id = ? AND quotation_id = ?",
+            [item_id, quotation_id]
+        );
+
+        if (items.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({
+                success: false,
+                message: "Item not found in this quotation"
+            });
+        }
+
+        const item = items[0];
+        const oldQuantity = item.quantity;
+
+        // Calculate new values
+        const price = parseFloat(item.price);
+        const discountPercent = parseFloat(item.discount) || 0;
+        const discountAmount = (price * discountPercent) / 100;
+        const finalPrice = price - discountAmount;
+        const newSubtotal = finalPrice * quantity;
+
+        // Update the item quantity
+        await connection.execute(
+            `UPDATE quotation_items 
+            SET quantity = ?, subtotal = ?
+            WHERE id = ? AND quotation_id = ?`,
+            [quantity, newSubtotal, item_id, quotation_id]
+        );
+
+        // Recalculate quotation totals
+        const [allItems] = await connection.execute(
+            "SELECT * FROM quotation_items WHERE quotation_id = ?",
+            [quotation_id]
+        );
+
+        let totalItems = 0;
+        let totalAmount = 0;
+        let totalDiscount = 0;
+        let grandTotal = 0;
+
+        allItems.forEach(item => {
+            const qty = item.quantity;
+            const price = parseFloat(item.price);
+            const discount = parseFloat(item.discount) || 0;
+            const discountAmount = (price * discount) / 100;
+            const finalPrice = price - discountAmount;
+
+            totalItems += qty;
+            totalAmount += price * qty;
+            totalDiscount += discountAmount * qty;
+            grandTotal += finalPrice * qty;
+        });
+
+        // Update quotation totals
+        await connection.execute(
+            `UPDATE quotations 
+            SET total_items = ?, total_amount = ?, total_discount = ?, grand_total = ?
+            WHERE id = ?`,
+            [totalItems, totalAmount, totalDiscount, grandTotal, quotation_id]
+        );
+
+        await connection.commit();
+
+        res.json({
+            success: true,
+            message: "Quantity updated successfully",
+            data: {
+                quotation_id,
+                item_id,
+                old_quantity: oldQuantity,
+                new_quantity: quantity,
+                total_items: totalItems,
+                grand_total: grandTotal
+            }
+        });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error updating quotation quantity:', err);
+        res.status(500).json({
+            success: false,
+            message: err.message || 'Failed to update quantity'
+        });
+    } finally {
+        connection.release();
+    }
+});
+
 module.exports = router;
