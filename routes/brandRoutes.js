@@ -3,15 +3,17 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
-// Get all brands with category information
+// Get all brands with category and subcategory information
 router.get("/", async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
+              pb.sub_category_id, psc.subcategory_name as sub_category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
        LEFT JOIN product_categories pc ON pb.category_id = pc.id
+       LEFT JOIN category_subcategories psc ON pb.sub_category_id = psc.id
        ORDER BY pb.brand_name ASC`
     );
     res.json({
@@ -35,9 +37,11 @@ router.get("/:id", async (req, res) => {
     const [rows] = await db.query(
       `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
+              pb.sub_category_id, psc.subcategory_name as sub_category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
        LEFT JOIN product_categories pc ON pb.category_id = pc.id
+       LEFT JOIN category_subcategories psc ON pb.sub_category_id = psc.id
        WHERE pb.id = ?`,
       [id]
     );
@@ -68,7 +72,8 @@ router.post("/", async (req, res) => {
   try {
     const { 
       brand_name, 
-      category_id
+      category_id,
+      sub_category_id
     } = req.body;
 
     // Validate required fields
@@ -84,6 +89,14 @@ router.post("/", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Category is required"
+      });
+    }
+
+    // Validate subcategory is provided
+    if (!sub_category_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Subcategory is required"
       });
     }
 
@@ -113,14 +126,28 @@ router.post("/", async (req, res) => {
       });
     }
 
+    // Check if subcategory exists and belongs to the category
+    const [subcategoryExists] = await db.query(
+      "SELECT id FROM category_subcategories WHERE id = ? AND category_id = ?",
+      [sub_category_id, category_id]
+    );
+
+    if (subcategoryExists.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected subcategory does not exist or does not belong to the selected category"
+      });
+    }
+
     // Insert new brand
     const [result] = await db.query(
       `INSERT INTO product_brands 
-       (brand_name, category_id) 
-       VALUES (?, ?)`,
+       (brand_name, category_id, sub_category_id) 
+       VALUES (?, ?, ?)`,
       [
         brand_name.trim(), 
-        category_id
+        category_id,
+        sub_category_id
       ]
     );
 
@@ -128,9 +155,11 @@ router.post("/", async (req, res) => {
     const [newBrand] = await db.query(
       `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
+              pb.sub_category_id, psc.subcategory_name as sub_category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
        LEFT JOIN product_categories pc ON pb.category_id = pc.id
+       LEFT JOIN category_subcategories psc ON pb.sub_category_id = psc.id
        WHERE pb.id = ?`,
       [result.insertId]
     );
@@ -156,7 +185,8 @@ router.put("/:id", async (req, res) => {
     const { id } = req.params;
     const { 
       brand_name, 
-      category_id
+      category_id,
+      sub_category_id
     } = req.body;
 
     // Validate required fields
@@ -172,6 +202,14 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Category is required"
+      });
+    }
+
+    // Validate subcategory is provided
+    if (!sub_category_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Subcategory is required"
       });
     }
 
@@ -201,6 +239,19 @@ router.put("/:id", async (req, res) => {
       });
     }
 
+    // Check if subcategory exists and belongs to the category
+    const [subcategoryExists] = await db.query(
+      "SELECT id FROM category_subcategories WHERE id = ? AND category_id = ?",
+      [sub_category_id, category_id]
+    );
+
+    if (subcategoryExists.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected subcategory does not exist or does not belong to the selected category"
+      });
+    }
+
     // Check if another brand has the same name (excluding current brand)
     const [existing] = await db.query(
       "SELECT id FROM product_brands WHERE brand_name = ? AND id != ?",
@@ -218,11 +269,13 @@ router.put("/:id", async (req, res) => {
     await db.query(
       `UPDATE product_brands SET 
         brand_name = ?, 
-        category_id = ?
+        category_id = ?,
+        sub_category_id = ?
        WHERE id = ?`,
       [
         brand_name.trim(), 
         category_id,
+        sub_category_id,
         id
       ]
     );
@@ -231,9 +284,11 @@ router.put("/:id", async (req, res) => {
     const [updatedBrand] = await db.query(
       `SELECT pb.id, pb.brand_name,
               pb.category_id, pc.category_name,
+              pb.sub_category_id, psc.subcategory_name as sub_category_name,
               pb.created_at, pb.updated_at 
        FROM product_brands pb
        LEFT JOIN product_categories pc ON pb.category_id = pc.id
+       LEFT JOIN category_subcategories psc ON pb.sub_category_id = psc.id
        WHERE pb.id = ?`,
       [id]
     );

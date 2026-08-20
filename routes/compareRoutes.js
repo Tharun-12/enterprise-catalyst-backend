@@ -1,3 +1,5 @@
+// compareRoutes.js - Fixed version
+
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -114,7 +116,7 @@ router.get("/:userId", async (req, res) => {
             });
         }
 
-        // Modified query to include product_type from compare table
+        // Fixed query - removed columns that don't exist in the products table
         const [rows] = await db.execute(
             `SELECT
                 c.id AS compare_id,
@@ -137,12 +139,6 @@ router.get("/:userId", async (req, res) => {
                 p.min_price,
                 p.max_price,
                 p.discount,
-                p.conductor_type,
-                p.cable_od,
-                p.jacket_material,
-                p.bandwidth,
-                p.operating_temperature,
-                p.poe_support,
                 cat.category_name
             FROM compare c
             INNER JOIN products p ON c.product_id = p.id
@@ -152,8 +148,9 @@ router.get("/:userId", async (req, res) => {
             [userId]
         );
 
-        // Get variants for each product
+        // Get variants and specifications for each product
         for (const product of rows) {
+            // Get variants
             const [variants] = await db.execute(
                 `SELECT 
                     id,
@@ -161,12 +158,17 @@ router.get("/:userId", async (req, res) => {
                     variant_name,
                     part_code,
                     category,
+                    sub_category,
                     brand,
                     description,
                     spec_type,
                     color,
+                    color_name,
+                    color_hex,
                     size,
                     price,
+                    min_price,
+                    max_price,
                     availability,
                     datasheet_url,
                     image_url,
@@ -181,11 +183,28 @@ router.get("/:userId", async (req, res) => {
             
             // Calculate min and max price from variants if min_price/max_price are null
             if (variants.length > 0) {
-                const prices = variants.map(v => parseFloat(v.price)).filter(p => !isNaN(p));
+                const prices = variants
+                    .map(v => parseFloat(v.price))
+                    .filter(p => !isNaN(p) && p > 0);
+                
                 if (prices.length > 0) {
                     product.min_price = Math.min(...prices).toFixed(2);
                     product.max_price = Math.max(...prices).toFixed(2);
                 }
+            }
+
+            // Get specifications from product_specifications table if it exists
+            try {
+                const [specs] = await db.execute(
+                    `SELECT * FROM product_specifications WHERE product_id = ?`,
+                    [product.product_id]
+                );
+                if (specs.length > 0) {
+                    product.specifications = specs[0];
+                }
+            } catch (specErr) {
+                // Table might not exist, ignore
+                product.specifications = {};
             }
         }
 

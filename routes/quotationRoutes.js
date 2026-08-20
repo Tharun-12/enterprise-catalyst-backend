@@ -1,4 +1,4 @@
-// quotationRoutes.js - Fixed without JSON_ARRAYAGG
+// quotationRoutes.js - Fixed without price column
 
 const express = require("express");
 const router = express.Router();
@@ -6,12 +6,6 @@ const db = require("../db");
 
 // =======================================================
 // Generate Quotation From Wishlist
-// POST /api/quotations/generate
-// =======================================================
-// quotationRoutes.js - Add this new route
-
-// =======================================================
-// Generate Quotation From Wishlist (with selected products)
 // POST /api/quotations/generate-from-wishlist
 // =======================================================
 router.post("/quotations/generate-from-wishlist", async (req, res) => {
@@ -102,7 +96,7 @@ router.post("/quotations/generate-from-wishlist", async (req, res) => {
             const quantity = Number(item.quantity) || 1;
             const subtotal = finalPrice * quantity;
 
-            // Get product variants
+            // Get product variants - FIXED: removed 'price' column
             const [variants] = await connection.execute(
                 `SELECT 
                     id,
@@ -111,7 +105,8 @@ router.post("/quotations/generate-from-wishlist", async (req, res) => {
                     spec_type,
                     color,
                     size,
-                    price,
+                    min_price,
+                    max_price,
                     image_url,
                     stock
                 FROM product_variants 
@@ -318,7 +313,7 @@ router.post("/quotations/single", async (req, res) => {
             }
             product = products[0];
 
-            // Get variants separately
+            // Get variants separately - FIXED: removed 'price' column
             const [variants] = await connection.execute(
                 `SELECT 
                     id,
@@ -327,7 +322,8 @@ router.post("/quotations/single", async (req, res) => {
                     spec_type,
                     color,
                     size,
-                    price,
+                    min_price,
+                    max_price,
                     image_url,
                     stock
                 FROM product_variants 
@@ -339,7 +335,6 @@ router.post("/quotations/single", async (req, res) => {
         }
 
         // Calculate amounts - discount is percentage
-        // Use max_price if available, otherwise use min_price
         let priceNum = Number(product.price) || Number(product.max_price) || Number(product.min_price) || 0;
         const discountPercent = Number(product.discount || 0);
         const discountAmount = (priceNum * discountPercent) / 100;
@@ -636,8 +631,6 @@ router.put("/quotations/:id/status", async (req, res) => {
         });
     }
 });
-
-
 
 // =======================================================
 // Update Quotation Item Quantity
