@@ -1,15 +1,15 @@
-// compareRoutes.js - Fixed version
+// compareRoutes.js - Fixed with variant_id support and proper price handling
 
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
 // ========================================
-// Add Product To Compare
+// Add Product To Compare (with variant_id)
 // ========================================
 router.post("/", async (req, res) => {
     try {
-        const { user_id, product_id } = req.body;
+        const { user_id, product_id, variant_id } = req.body;
 
         if (!user_id || !product_id) {
             return res.status(400).json({
@@ -33,6 +33,20 @@ router.post("/", async (req, res) => {
 
         const productType = productCheck[0].product_type;
 
+        // If variant_id is provided, check if it exists
+        if (variant_id) {
+            const [variantCheck] = await db.execute(
+                "SELECT * FROM product_variants WHERE id = ? AND product_id = ?",
+                [variant_id, product_id]
+            );
+            if (variantCheck.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Variant not found for this product."
+                });
+            }
+        }
+
         // Check if product already exists in compare list
         const [exists] = await db.execute(
             "SELECT * FROM compare WHERE user_id = ? AND product_id = ?",
@@ -40,6 +54,18 @@ router.post("/", async (req, res) => {
         );
 
         if (exists.length > 0) {
+            // Update variant_id if different
+            if (variant_id && exists[0].variant_id !== variant_id) {
+                await db.execute(
+                    "UPDATE compare SET variant_id = ?, updated_at = NOW() WHERE user_id = ? AND product_id = ?",
+                    [variant_id, user_id, product_id]
+                );
+                return res.json({
+                    success: true,
+                    message: "Variant updated in compare list.",
+                    data: { product_id, variant_id }
+                });
+            }
             return res.status(409).json({
                 success: false,
                 message: "Product already exists in compare list."
@@ -75,10 +101,10 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Insert into compare table with product_type
+        // Insert into compare table with product_type and variant_id
         const [result] = await db.execute(
-            "INSERT INTO compare (user_id, product_id, product_type, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
-            [user_id, product_id, productType]
+            "INSERT INTO compare (user_id, product_id, product_type, variant_id, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())",
+            [user_id, product_id, productType, variant_id || null]
         );
 
         // Get the inserted record
@@ -103,7 +129,7 @@ router.post("/", async (req, res) => {
 });
 
 // ========================================
-// Get User Compare List with Product Details
+// Get User Compare List with Product Details and Variants
 // ========================================
 router.get("/:userId", async (req, res) => {
     try {
@@ -116,12 +142,12 @@ router.get("/:userId", async (req, res) => {
             });
         }
 
-        // Fixed query - removed columns that don't exist in the products table
         const [rows] = await db.execute(
             `SELECT
                 c.id AS compare_id,
                 c.user_id,
                 c.product_type AS compare_product_type,
+                c.variant_id AS selected_variant_id,
                 c.created_at AS compare_created_at,
                 c.updated_at AS compare_updated_at,
                 p.id AS product_id,
@@ -150,7 +176,7 @@ router.get("/:userId", async (req, res) => {
 
         // Get variants and specifications for each product
         for (const product of rows) {
-            // Get variants
+            // Get all variants for the product
             const [variants] = await db.execute(
                 `SELECT 
                     id,
@@ -163,10 +189,7 @@ router.get("/:userId", async (req, res) => {
                     description,
                     spec_type,
                     color,
-                    color_name,
-                    color_hex,
                     size,
-                    price,
                     min_price,
                     max_price,
                     availability,
@@ -179,21 +202,41 @@ router.get("/:userId", async (req, res) => {
                 WHERE product_id = ?`,
                 [product.product_id]
             );
-            product.variants = variants;
             
-            // Calculate min and max price from variants if min_price/max_price are null
-            if (variants.length > 0) {
-                const prices = variants
-                    .map(v => parseFloat(v.price))
+            // Mark which variant is selected
+            const selectedVariantId = product.selected_variant_id;
+            product.variants = variants.map(v => ({
+                ...v,
+                is_selected: v.id === selectedVariantId
+            }));
+            
+            // ✅ FIXED: If a variant is selected, use its min/max prices
+            if (selectedVariantId) {
+                const selectedVariant = variants.find(v => v.id === selectedVariantId);
+                if (selectedVariant) {
+                    // Use the selected variant's prices
+                    product.min_price = selectedVariant.min_price || product.min_price;
+                    product.max_price = selectedVariant.max_price || product.max_price;
+                }
+            } else {
+                // If no variant selected, calculate from all variants
+                const minPrices = variants
+                    .map(v => parseFloat(v.min_price || '0'))
                     .filter(p => !isNaN(p) && p > 0);
                 
-                if (prices.length > 0) {
-                    product.min_price = Math.min(...prices).toFixed(2);
-                    product.max_price = Math.max(...prices).toFixed(2);
+                const maxPrices = variants
+                    .map(v => parseFloat(v.max_price || '0'))
+                    .filter(p => !isNaN(p) && p > 0);
+                
+                if (minPrices.length > 0) {
+                    product.min_price = Math.min(...minPrices).toString();
+                }
+                if (maxPrices.length > 0) {
+                    product.max_price = Math.max(...maxPrices).toString();
                 }
             }
 
-            // Get specifications from product_specifications table if it exists
+            // Get specifications
             try {
                 const [specs] = await db.execute(
                     `SELECT * FROM product_specifications WHERE product_id = ?`,
@@ -203,7 +246,6 @@ router.get("/:userId", async (req, res) => {
                     product.specifications = specs[0];
                 }
             } catch (specErr) {
-                // Table might not exist, ignore
                 product.specifications = {};
             }
         }
@@ -353,12 +395,10 @@ router.post("/bulk", async (req, res) => {
             });
         }
 
-        // Start transaction
         const connection = await db.getConnection();
         await connection.beginTransaction();
 
         try {
-            // Get product types for all products
             const placeholders = product_ids.map(() => '?').join(',');
             const [products] = await connection.execute(
                 `SELECT id, product_type FROM products WHERE id IN (${placeholders})`,
@@ -374,7 +414,6 @@ router.post("/bulk", async (req, res) => {
                 });
             }
 
-            // Check if all products have the same product_type
             const productTypes = products.map(p => p.product_type);
             const uniqueTypes = [...new Set(productTypes)];
             
@@ -389,13 +428,11 @@ router.post("/bulk", async (req, res) => {
 
             const productType = uniqueTypes[0];
 
-            // Clear existing compare items for user
             await connection.execute(
                 "DELETE FROM compare WHERE user_id = ?",
                 [user_id]
             );
 
-            // Add new compare items
             const addedProducts = [];
             for (const product of products) {
                 await connection.execute(

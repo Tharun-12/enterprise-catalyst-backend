@@ -596,9 +596,19 @@ router.delete("/variants/:id", async (req, res) => {
 });
 
 // GET VARIANTS BY PRODUCT
+// GET VARIANTS BY PRODUCT - Fixed
 router.get("/variants/:productId", async (req, res) => {
     try {
         const productId = parseInt(req.params.productId, 10);
+        
+        // ✅ Check if productId is a valid number
+        if (isNaN(productId)) {
+            return res.status(400).json({
+                success: false,
+                error: "Invalid product ID"
+            });
+        }
+        
         const [variants] = await db.query(
             "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
             [productId]
@@ -697,9 +707,19 @@ router.post("/spec-comparison", async (req, res) => {
 });
 
 // GET SPEC COMPARISONS BY PRODUCT
+// GET SPEC COMPARISONS BY PRODUCT - Fixed
 router.get("/spec-comparison/:productId", async (req, res) => {
     try {
         const productId = parseInt(req.params.productId, 10);
+        
+        // ✅ Check if productId is a valid number
+        if (isNaN(productId)) {
+            return res.status(400).json({
+                success: false,
+                error: "Invalid product ID"
+            });
+        }
+        
         const [comparisons] = await db.query(
             "SELECT * FROM spec_comparison WHERE product_id = ?",
             [productId]
