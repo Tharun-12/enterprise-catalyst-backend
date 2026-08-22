@@ -1,5 +1,4 @@
-// compareRoutes.js - Fixed with variant_id support and proper price handling
-
+// compareRoutes.js - Fixed with correct field names
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -153,7 +152,8 @@ router.get("/:userId", async (req, res) => {
                 p.id AS product_id,
                 p.product_name,
                 p.product_code,
-                p.product_category_id,
+                p.category_id AS product_category_id,
+                p.sub_category_id,
                 p.product_brand,
                 p.product_details_pdf,
                 p.product_description,
@@ -165,10 +165,12 @@ router.get("/:userId", async (req, res) => {
                 p.min_price,
                 p.max_price,
                 p.discount,
-                cat.category_name
+                cat.category_name,
+                subcat.subcategory_name
             FROM compare c
             INNER JOIN products p ON c.product_id = p.id
-            LEFT JOIN product_categories cat ON p.product_category_id = cat.id
+            LEFT JOIN product_categories cat ON p.category_id = cat.id
+            LEFT JOIN category_subcategories subcat ON p.sub_category_id = subcat.id
             WHERE c.user_id = ?
             ORDER BY c.created_at DESC`,
             [userId]
@@ -210,11 +212,10 @@ router.get("/:userId", async (req, res) => {
                 is_selected: v.id === selectedVariantId
             }));
             
-            // ✅ FIXED: If a variant is selected, use its min/max prices
+            // If a variant is selected, use its min/max prices
             if (selectedVariantId) {
                 const selectedVariant = variants.find(v => v.id === selectedVariantId);
                 if (selectedVariant) {
-                    // Use the selected variant's prices
                     product.min_price = selectedVariant.min_price || product.min_price;
                     product.max_price = selectedVariant.max_price || product.max_price;
                 }
@@ -244,6 +245,8 @@ router.get("/:userId", async (req, res) => {
                 );
                 if (specs.length > 0) {
                     product.specifications = specs[0];
+                } else {
+                    product.specifications = {};
                 }
             } catch (specErr) {
                 product.specifications = {};
