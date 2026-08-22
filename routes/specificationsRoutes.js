@@ -3,72 +3,24 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
-// Helper function to ensure brand exists in product_brands table
-const ensureBrandExists = async (brandName, categoryId) => {
-  try {
-    // Check if brand already exists
-    const [existingBrand] = await db.query(
-      "SELECT id FROM product_brands WHERE brand_name = ?",
-      [brandName.trim()]
-    );
-
-    if (existingBrand.length > 0) {
-      // Brand exists, return its id
-      return existingBrand[0].id;
-    }
-
-    // Brand doesn't exist, create it
-    const [result] = await db.query(
-      "INSERT INTO product_brands (brand_name, category_id) VALUES (?, ?)",
-      [brandName.trim(), categoryId]
-    );
-
-    console.log(`✅ New brand created: "${brandName}" with ID: ${result.insertId}`);
-    return result.insertId;
-  } catch (error) {
-    console.error(`Error ensuring brand exists for "${brandName}":`, error);
-    throw error;
-  }
-};
-
-// Process all brands in color_brand_mapping
-const processBrandsInMapping = async (colorBrandMapping, categoryId) => {
-  const processedMapping = {};
-  
-  for (const [color, brands] of Object.entries(colorBrandMapping)) {
-    processedMapping[color] = [];
-    for (const brandName of brands) {
-      try {
-        // Ensure brand exists in product_brands
-        await ensureBrandExists(brandName, categoryId);
-        processedMapping[color].push(brandName);
-      } catch (error) {
-        console.error(`Failed to process brand "${brandName}":`, error);
-        // Still add the brand name to the mapping even if creation fails
-        processedMapping[color].push(brandName);
-      }
-    }
-  }
-  
-  return processedMapping;
-};
-
 // Get all specifications with category info
 router.get("/", async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
-              s.color_brand_mapping,
+      `SELECT s.id, s.category_id, c.category_name, 
+              s.sub_category_id, sc.subcategory_name,
+              s.spec_name, 
+              s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
+       LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
        ORDER BY s.spec_name ASC`
     );
     
-    // Parse JSON fields before sending
     const parsedRows = rows.map(row => ({
       ...row,
-      color_brand_mapping: row.color_brand_mapping ? JSON.parse(row.color_brand_mapping) : {}
+      product_specifications: row.product_specifications ? JSON.parse(row.product_specifications) : []
     }));
     
     res.json({
@@ -90,11 +42,14 @@ router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
-              s.color_brand_mapping,
+      `SELECT s.id, s.category_id, c.category_name, 
+              s.sub_category_id, sc.subcategory_name,
+              s.spec_name, 
+              s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
+       LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
        WHERE s.id = ?`,
       [id]
     );
@@ -106,11 +61,10 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    // Parse JSON fields
     const row = rows[0];
     const parsedRow = {
       ...row,
-      color_brand_mapping: row.color_brand_mapping ? JSON.parse(row.color_brand_mapping) : {}
+      product_specifications: row.product_specifications ? JSON.parse(row.product_specifications) : []
     };
 
     res.json({
@@ -131,7 +85,7 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { 
-      category_id, spec_name, color_brand_mapping
+      category_id, sub_category_id, spec_name, product_specifications
     } = req.body;
 
     console.log('Received data:', req.body);
@@ -141,6 +95,13 @@ router.post("/", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Category is required"
+      });
+    }
+
+    if (!sub_category_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Subcategory is required"
       });
     }
 
@@ -164,58 +125,66 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Check if spec_name already exists for this category
+    // Check if subcategory exists and belongs to the category
+    const [subCategoryExists] = await db.query(
+      "SELECT id FROM category_subcategories WHERE id = ? AND category_id = ?",
+      [sub_category_id, category_id]
+    );
+
+    if (subCategoryExists.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected subcategory does not exist or does not belong to the selected category"
+      });
+    }
+
+    // Check if spec_name already exists for this category and subcategory
     const [existingSpec] = await db.query(
-      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ?",
-      [spec_name.trim(), category_id]
+      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ?",
+      [spec_name.trim(), category_id, sub_category_id]
     );
 
     if (existingSpec.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "This specification already exists for the selected category"
+        message: "This specification already exists for the selected category and subcategory"
       });
     }
 
-    // Process brands to ensure they exist in product_brands
-    let processedMapping = color_brand_mapping || {};
-    if (Object.keys(processedMapping).length > 0) {
-      try {
-        processedMapping = await processBrandsInMapping(processedMapping, category_id);
-        console.log('✅ Processed brand mapping:', processedMapping);
-      } catch (error) {
-        console.error('Error processing brands:', error);
-        // Continue with original mapping if processing fails
-      }
-    }
+    // Prepare product specifications
+    let specs = product_specifications || [];
+    // Remove empty specifications
+    specs = specs.filter(spec => spec.spec_name && spec.spec_name.trim() && spec.value && spec.value.trim());
 
     // Insert new specification
     const [result] = await db.query(
       `INSERT INTO specifications 
-       (category_id, spec_name, color_brand_mapping) 
-       VALUES (?, ?, ?)`,
+       (category_id, sub_category_id, spec_name, product_specifications) 
+       VALUES (?, ?, ?, ?)`,
       [
         category_id,
+        sub_category_id,
         spec_name.trim(),
-        processedMapping ? JSON.stringify(processedMapping) : null
+        specs.length > 0 ? JSON.stringify(specs) : null
       ]
     );
 
-    // Get the newly created specification
     const [newSpec] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
-              s.color_brand_mapping,
+      `SELECT s.id, s.category_id, c.category_name, 
+              s.sub_category_id, sc.subcategory_name,
+              s.spec_name, 
+              s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
+       LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
        WHERE s.id = ?`,
       [result.insertId]
     );
 
-    // Parse JSON fields
     const parsedSpec = {
       ...newSpec[0],
-      color_brand_mapping: newSpec[0].color_brand_mapping ? JSON.parse(newSpec[0].color_brand_mapping) : {}
+      product_specifications: newSpec[0].product_specifications ? JSON.parse(newSpec[0].product_specifications) : []
     };
 
     res.status(201).json({
@@ -238,7 +207,7 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { 
-      category_id, spec_name, color_brand_mapping
+      category_id, sub_category_id, spec_name, product_specifications
     } = req.body;
 
     // Validate required fields
@@ -246,6 +215,13 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Category is required"
+      });
+    }
+
+    if (!sub_category_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Subcategory is required"
       });
     }
 
@@ -282,61 +258,69 @@ router.put("/:id", async (req, res) => {
       });
     }
 
+    // Check if subcategory exists and belongs to the category
+    const [subCategoryExists] = await db.query(
+      "SELECT id FROM category_subcategories WHERE id = ? AND category_id = ?",
+      [sub_category_id, category_id]
+    );
+
+    if (subCategoryExists.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected subcategory does not exist or does not belong to the selected category"
+      });
+    }
+
     // Check if another spec has the same name (excluding current)
     const [existingSpec] = await db.query(
-      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND id != ?",
-      [spec_name.trim(), category_id, id]
+      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ? AND id != ?",
+      [spec_name.trim(), category_id, sub_category_id, id]
     );
 
     if (existingSpec.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "Another specification with this name already exists for the selected category"
+        message: "Another specification with this name already exists for the selected category and subcategory"
       });
     }
 
-    // Process brands to ensure they exist in product_brands
-    let processedMapping = color_brand_mapping || {};
-    if (Object.keys(processedMapping).length > 0) {
-      try {
-        processedMapping = await processBrandsInMapping(processedMapping, category_id);
-        console.log('✅ Processed brand mapping:', processedMapping);
-      } catch (error) {
-        console.error('Error processing brands:', error);
-        // Continue with original mapping if processing fails
-      }
-    }
+    // Prepare product specifications
+    let specs = product_specifications || [];
+    specs = specs.filter(spec => spec.spec_name && spec.spec_name.trim() && spec.value && spec.value.trim());
 
     // Update specification
     await db.query(
       `UPDATE specifications SET 
         category_id = ?,
+        sub_category_id = ?,
         spec_name = ?,
-        color_brand_mapping = ?
+        product_specifications = ?
        WHERE id = ?`,
       [
         category_id,
+        sub_category_id,
         spec_name.trim(),
-        processedMapping ? JSON.stringify(processedMapping) : null,
+        specs.length > 0 ? JSON.stringify(specs) : null,
         id
       ]
     );
 
-    // Get the updated specification
     const [updatedSpec] = await db.query(
-      `SELECT s.id, s.category_id, c.category_name, s.spec_name, 
-              s.color_brand_mapping,
+      `SELECT s.id, s.category_id, c.category_name, 
+              s.sub_category_id, sc.subcategory_name,
+              s.spec_name, 
+              s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
+       LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
        WHERE s.id = ?`,
       [id]
     );
 
-    // Parse JSON fields
     const parsedSpec = {
       ...updatedSpec[0],
-      color_brand_mapping: updatedSpec[0].color_brand_mapping ? JSON.parse(updatedSpec[0].color_brand_mapping) : {}
+      product_specifications: updatedSpec[0].product_specifications ? JSON.parse(updatedSpec[0].product_specifications) : []
     };
 
     res.json({
@@ -359,7 +343,6 @@ router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if specification exists
     const [spec] = await db.query(
       "SELECT id, spec_name FROM specifications WHERE id = ?",
       [id]
@@ -372,7 +355,6 @@ router.delete("/:id", async (req, res) => {
       });
     }
 
-    // Delete specification
     await db.query(
       "DELETE FROM specifications WHERE id = ?",
       [id]
