@@ -1,4 +1,4 @@
-// compareRoutes.js - Fixed to get specifications from products table
+// compareRoutes.js - Fixed to use sub_category for comparison
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -17,9 +17,9 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Get product details including product_type and specifications
+        // Get product details including sub_category_id and specifications
         const [productCheck] = await db.execute(
-            "SELECT id, product_type, specifications FROM products WHERE id = ?",
+            "SELECT id, sub_category_id, specifications FROM products WHERE id = ?",
             [product_id]
         );
 
@@ -30,7 +30,7 @@ router.post("/", async (req, res) => {
             });
         }
 
-        const productType = productCheck[0].product_type;
+        const subCategoryId = productCheck[0].sub_category_id;
 
         // If variant_id is provided, check if it exists
         if (variant_id) {
@@ -71,18 +71,29 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Check if user has any products in compare and get their product_type
+        // Check if user has any products in compare and get their sub_category_id
         const [existingCompare] = await db.execute(
-            "SELECT product_type FROM compare WHERE user_id = ? LIMIT 1",
+            "SELECT sub_category_id FROM compare WHERE user_id = ? LIMIT 1",
             [user_id]
         );
 
         if (existingCompare.length > 0) {
-            const existingType = existingCompare[0].product_type;
-            if (existingType !== productType) {
+            const existingSubCategoryId = existingCompare[0].sub_category_id;
+            if (existingSubCategoryId !== subCategoryId) {
+                // Get subcategory names for better error message
+                const [existingSubCat] = await db.execute(
+                    "SELECT subcategory_name FROM category_subcategories WHERE id = ?",
+                    [existingSubCategoryId]
+                );
+                const [newSubCat] = await db.execute(
+                    "SELECT subcategory_name FROM category_subcategories WHERE id = ?",
+                    [subCategoryId]
+                );
+                const existingName = existingSubCat.length > 0 ? existingSubCat[0].subcategory_name : 'Unknown';
+                const newName = newSubCat.length > 0 ? newSubCat[0].subcategory_name : 'Unknown';
                 return res.status(400).json({
                     success: false,
-                    message: `Cannot compare different product types. Existing: ${existingType}, New: ${productType}`
+                    message: `Cannot compare different subcategories. Existing: ${existingName}, New: ${newName}`
                 });
             }
         }
@@ -100,10 +111,10 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Insert into compare table with product_type and variant_id
+        // Insert into compare table with sub_category_id and variant_id
         const [result] = await db.execute(
-            "INSERT INTO compare (user_id, product_id, product_type, variant_id, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())",
-            [user_id, product_id, productType, variant_id || null]
+            "INSERT INTO compare (user_id, product_id, sub_category_id, variant_id, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())",
+            [user_id, product_id, subCategoryId, variant_id || null]
         );
 
         // Get the inserted record
@@ -145,7 +156,7 @@ router.get("/:userId", async (req, res) => {
             `SELECT
                 c.id AS compare_id,
                 c.user_id,
-                c.product_type AS compare_product_type,
+                c.sub_category_id AS compare_sub_category_id,
                 c.variant_id AS selected_variant_id,
                 c.created_at AS compare_created_at,
                 c.updated_at AS compare_updated_at,
@@ -241,11 +252,9 @@ router.get("/:userId", async (req, res) => {
             // Parse specifications from the product's specifications JSON field
             if (product.specifications) {
                 try {
-                    // If specifications is a string, parse it
                     if (typeof product.specifications === 'string') {
                         product.specifications = JSON.parse(product.specifications);
                     }
-                    // If it's already an object, keep it as is
                 } catch (parseErr) {
                     console.error('Error parsing specifications for product', product.product_id, ':', parseErr);
                     product.specifications = {};
@@ -254,7 +263,7 @@ router.get("/:userId", async (req, res) => {
                 product.specifications = {};
             }
 
-            // Also extract individual spec fields for easier access in frontend
+            // Extract individual spec fields for easier access in frontend
             const specFields = product.specifications || {};
             product.spec_type = specFields['Spec Type'] || specFields['spec_type'] || 
                                (variants.length > 0 ? variants[0].spec_type : null) || '—';
@@ -416,7 +425,7 @@ router.post("/bulk", async (req, res) => {
         try {
             const placeholders = product_ids.map(() => '?').join(',');
             const [products] = await connection.execute(
-                `SELECT id, product_type FROM products WHERE id IN (${placeholders})`,
+                `SELECT id, sub_category_id FROM products WHERE id IN (${placeholders})`,
                 product_ids
             );
 
@@ -429,19 +438,19 @@ router.post("/bulk", async (req, res) => {
                 });
             }
 
-            const productTypes = products.map(p => p.product_type);
-            const uniqueTypes = [...new Set(productTypes)];
+            const subCategoryIds = products.map(p => p.sub_category_id);
+            const uniqueSubCategoryIds = [...new Set(subCategoryIds)];
             
-            if (uniqueTypes.length > 1) {
+            if (uniqueSubCategoryIds.length > 1) {
                 await connection.rollback();
                 connection.release();
                 return res.status(400).json({
                     success: false,
-                    message: `Cannot compare products with different types: ${uniqueTypes.join(', ')}`
+                    message: `Cannot compare products with different subcategories.`
                 });
             }
 
-            const productType = uniqueTypes[0];
+            const subCategoryId = uniqueSubCategoryIds[0];
 
             await connection.execute(
                 "DELETE FROM compare WHERE user_id = ?",
@@ -451,8 +460,8 @@ router.post("/bulk", async (req, res) => {
             const addedProducts = [];
             for (const product of products) {
                 await connection.execute(
-                    "INSERT INTO compare (user_id, product_id, product_type, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
-                    [user_id, product.id, productType]
+                    "INSERT INTO compare (user_id, product_id, sub_category_id, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())",
+                    [user_id, product.id, subCategoryId]
                 );
                 addedProducts.push(product.id);
             }
