@@ -1,4 +1,4 @@
-// compareRoutes.js - Fixed with correct field names
+// compareRoutes.js - Fixed to get specifications from products table
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -17,9 +17,9 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Get product details including product_type
+        // Get product details including product_type and specifications
         const [productCheck] = await db.execute(
-            "SELECT id, product_type FROM products WHERE id = ?",
+            "SELECT id, product_type, specifications FROM products WHERE id = ?",
             [product_id]
         );
 
@@ -160,6 +160,7 @@ router.get("/:userId", async (req, res) => {
                 p.warranty,
                 p.product_series,
                 p.product_type,
+                p.specifications,
                 p.created_at AS product_created_at,
                 p.updated_at AS product_updated_at,
                 p.min_price,
@@ -176,7 +177,7 @@ router.get("/:userId", async (req, res) => {
             [userId]
         );
 
-        // Get variants and specifications for each product
+        // Get variants and parse specifications for each product
         for (const product of rows) {
             // Get all variants for the product
             const [variants] = await db.execute(
@@ -237,20 +238,31 @@ router.get("/:userId", async (req, res) => {
                 }
             }
 
-            // Get specifications
-            try {
-                const [specs] = await db.execute(
-                    `SELECT * FROM product_specifications WHERE product_id = ?`,
-                    [product.product_id]
-                );
-                if (specs.length > 0) {
-                    product.specifications = specs[0];
-                } else {
+            // Parse specifications from the product's specifications JSON field
+            if (product.specifications) {
+                try {
+                    // If specifications is a string, parse it
+                    if (typeof product.specifications === 'string') {
+                        product.specifications = JSON.parse(product.specifications);
+                    }
+                    // If it's already an object, keep it as is
+                } catch (parseErr) {
+                    console.error('Error parsing specifications for product', product.product_id, ':', parseErr);
                     product.specifications = {};
                 }
-            } catch (specErr) {
+            } else {
                 product.specifications = {};
             }
+
+            // Also extract individual spec fields for easier access in frontend
+            const specFields = product.specifications || {};
+            product.spec_type = specFields['Spec Type'] || specFields['spec_type'] || 
+                               (variants.length > 0 ? variants[0].spec_type : null) || '—';
+            product.bandwidth = specFields['Bandwidth'] || specFields['bandwidth'] || '—';
+            product.max_data_rate = specFields['Max Data Rate'] || specFields['max_data_rate'] || '—';
+            product.internal_design = specFields['Internal Design'] || specFields['internal_design'] || '—';
+            product.typical_applications = specFields['Typical Applications'] || specFields['typical_applications'] || '—';
+            product.product_series = specFields['Product Series'] || specFields['product_series'] || product.product_series || '—';
         }
 
         res.json({
