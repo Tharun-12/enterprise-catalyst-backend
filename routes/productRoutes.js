@@ -365,7 +365,8 @@ router.delete("/:id", async (req, res) => {
         }
 
         await db.query("DELETE FROM product_variants WHERE product_id = ?", [productId]);
-        await db.query("DELETE FROM spec_comparison WHERE product_id = ?", [productId]);
+        // COMMENTED OUT - Spec comparison deletion not needed
+        // await db.query("DELETE FROM spec_comparison WHERE product_id = ?", [productId]);
         await db.query("DELETE FROM products WHERE id = ?", [productId]);
 
         res.json({ success: true, message: "Product deleted successfully" });
@@ -621,154 +622,152 @@ router.get("/variants/:productId", async (req, res) => {
 });
 
 // ============================================
-// SPEC COMPARISON OPERATIONS
+// SPEC COMPARISON OPERATIONS - COMMENTED OUT
 // ============================================
 
-// CREATE/UPDATE SPEC COMPARISON
-router.post("/spec-comparison", async (req, res) => {
-    try {
-        const {
-            product_id,
-            spec_type,
-            bandwidth,
-            max_data_rate,
-            internal_design,
-            typical_applications
-        } = req.body;
+// CREATE/UPDATE SPEC COMPARISON - COMMENTED OUT
+// router.post("/spec-comparison", async (req, res) => {
+//     try {
+//         const {
+//             product_id,
+//             spec_type,
+//             bandwidth,
+//             max_data_rate,
+//             internal_design,
+//             typical_applications
+//         } = req.body;
 
-        console.log("Saving spec comparison:", req.body);
+//         console.log("Saving spec comparison:", req.body);
 
-        if (!spec_type || spec_type.trim() === '') {
-            return res.status(400).json({
-                success: false,
-                error: "Spec type is required"
-            });
-        }
+//         if (!spec_type || spec_type.trim() === '') {
+//             return res.status(400).json({
+//                 success: false,
+//                 error: "Spec type is required"
+//             });
+//         }
 
-        const cleanSpecType = spec_type.trim();
+//         const cleanSpecType = spec_type.trim();
 
-        const [existing] = await db.query(
-            "SELECT id FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
-            [product_id, cleanSpecType]
-        );
+//         const [existing] = await db.query(
+//             "SELECT id FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
+//             [product_id, cleanSpecType]
+//         );
 
-        let result;
-        if (existing.length > 0) {
-            [result] = await db.query(
-                `UPDATE spec_comparison SET
-                    bandwidth = ?,
-                    max_data_rate = ?,
-                    internal_design = ?,
-                    typical_applications = ?
-                WHERE product_id = ? AND spec_type = ?`,
-                [
-                    bandwidth || null,
-                    max_data_rate || null,
-                    internal_design || null,
-                    typical_applications || null,
-                    product_id,
-                    cleanSpecType
-                ]
-            );
-        } else {
-            [result] = await db.query(
-                `INSERT INTO spec_comparison
-                    (product_id, spec_type, bandwidth, max_data_rate, internal_design, typical_applications)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [
-                    product_id,
-                    cleanSpecType,
-                    bandwidth || null,
-                    max_data_rate || null,
-                    internal_design || null,
-                    typical_applications || null
-                ]
-            );
-        }
+//         let result;
+//         if (existing.length > 0) {
+//             [result] = await db.query(
+//                 `UPDATE spec_comparison SET
+//                     bandwidth = ?,
+//                     max_data_rate = ?,
+//                     internal_design = ?,
+//                     typical_applications = ?
+//                 WHERE product_id = ? AND spec_type = ?`,
+//                 [
+//                     bandwidth || null,
+//                     max_data_rate || null,
+//                     internal_design || null,
+//                     typical_applications || null,
+//                     product_id,
+//                     cleanSpecType
+//                 ]
+//             );
+//         } else {
+//             [result] = await db.query(
+//                 `INSERT INTO spec_comparison
+//                     (product_id, spec_type, bandwidth, max_data_rate, internal_design, typical_applications)
+//                  VALUES (?, ?, ?, ?, ?, ?)`,
+//                 [
+//                     product_id,
+//                     cleanSpecType,
+//                     bandwidth || null,
+//                     max_data_rate || null,
+//                     internal_design || null,
+//                     typical_applications || null
+//                 ]
+//             );
+//         }
 
-        res.json({
-            success: true,
-            message: "Spec comparison saved successfully",
-            id: result.insertId || existing[0]?.id
-        });
-    } catch (error) {
-        console.error("Error saving spec comparison:", error);
-        if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({
-                success: false,
-                error: "A spec comparison for this product and spec type already exists. Please update the existing one instead."
-            });
-        }
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
+//         res.json({
+//             success: true,
+//             message: "Spec comparison saved successfully",
+//             id: result.insertId || existing[0]?.id
+//         });
+//     } catch (error) {
+//         console.error("Error saving spec comparison:", error);
+//         if (error.code === 'ER_DUP_ENTRY') {
+//             return res.status(400).json({
+//                 success: false,
+//                 error: "A spec comparison for this product and spec type already exists. Please update the existing one instead."
+//             });
+//         }
+//         res.status(500).json({
+//             success: false,
+//             error: error.message
+//         });
+//     }
+// });
 
-// GET SPEC COMPARISONS BY PRODUCT
-// GET SPEC COMPARISONS BY PRODUCT - Fixed
-router.get("/spec-comparison/:productId", async (req, res) => {
-    try {
-        const productId = parseInt(req.params.productId, 10);
+// GET SPEC COMPARISONS BY PRODUCT - COMMENTED OUT
+// router.get("/spec-comparison/:productId", async (req, res) => {
+//     try {
+//         const productId = parseInt(req.params.productId, 10);
         
-        // ✅ Check if productId is a valid number
-        if (isNaN(productId)) {
-            return res.status(400).json({
-                success: false,
-                error: "Invalid product ID"
-            });
-        }
+//         if (isNaN(productId)) {
+//             return res.status(400).json({
+//                 success: false,
+//                 error: "Invalid product ID"
+//             });
+//         }
         
-        const [comparisons] = await db.query(
-            "SELECT * FROM spec_comparison WHERE product_id = ?",
-            [productId]
-        );
+//         const [comparisons] = await db.query(
+//             "SELECT * FROM spec_comparison WHERE product_id = ?",
+//             [productId]
+//         );
 
-        const result = {};
-        comparisons.forEach(item => {
-            result[item.spec_type] = item;
-        });
+//         const result = {};
+//         comparisons.forEach(item => {
+//             result[item.spec_type] = item;
+//         });
 
-        res.json(result);
-    } catch (error) {
-        console.error("Error fetching spec comparisons:", error);
-        res.status(500).json(error);
-    }
-});
+//         res.json(result);
+//     } catch (error) {
+//         console.error("Error fetching spec comparisons:", error);
+//         res.status(500).json(error);
+//     }
+// });
 
-// DELETE SPEC COMPARISON
-router.delete("/spec-comparison/:productId/:specType", async (req, res) => {
-    try {
-        const productId = parseInt(req.params.productId, 10);
-        const { specType } = req.params;
-        const decodedSpecType = decodeURIComponent(specType);
+// DELETE SPEC COMPARISON - COMMENTED OUT
+// router.delete("/spec-comparison/:productId/:specType", async (req, res) => {
+//     try {
+//         const productId = parseInt(req.params.productId, 10);
+//         const { specType } = req.params;
+//         const decodedSpecType = decodeURIComponent(specType);
         
-        await db.query(
-            "DELETE FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
-            [productId, decodedSpecType]
-        );
-        res.json({ success: true, message: "Spec comparison deleted successfully" });
-    } catch (error) {
-        console.error("Error deleting spec comparison:", error);
-        res.status(500).json(error);
-    }
-});
+//         await db.query(
+//             "DELETE FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
+//             [productId, decodedSpecType]
+//         );
+//         res.json({ success: true, message: "Spec comparison deleted successfully" });
+//     } catch (error) {
+//         console.error("Error deleting spec comparison:", error);
+//         res.status(500).json(error);
+//     }
+// });
 
-// DELETE ALL SPEC COMPARISONS FOR A PRODUCT
-router.delete("/spec-comparison/:productId/all", async (req, res) => {
-    try {
-        const productId = parseInt(req.params.productId, 10);
-        await db.query(
-            "DELETE FROM spec_comparison WHERE product_id = ?",
-            [productId]
-        );
-        res.json({ success: true, message: "All spec comparisons deleted successfully" });
-    } catch (error) {
-        console.error("Error deleting spec comparisons:", error);
-        res.status(500).json(error);
-    }
-});
+// DELETE ALL SPEC COMPARISONS FOR A PRODUCT - COMMENTED OUT
+// router.delete("/spec-comparison/:productId/all", async (req, res) => {
+//     try {
+//         const productId = parseInt(req.params.productId, 10);
+//         await db.query(
+//             "DELETE FROM spec_comparison WHERE product_id = ?",
+//             [productId]
+//         );
+//         res.json({ success: true, message: "All spec comparisons deleted successfully" });
+//     } catch (error) {
+//         console.error("Error deleting spec comparisons:", error);
+//         res.status(500).json(error);
+//     }
+// });
 
 // ============================================
 // SPECIFICATIONS OPERATIONS

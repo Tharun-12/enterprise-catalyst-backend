@@ -56,6 +56,8 @@ app.use("/api", wishlistRoutes);
 app.use("/api", quotationRoutes);
 app.use('/api/compare', compareRoutes);
 
+
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("Error:", err);
