@@ -9,12 +9,14 @@ router.get("/", async (req, res) => {
     const [rows] = await db.query(
       `SELECT s.id, s.category_id, c.category_name, 
               s.sub_category_id, sc.subcategory_name,
+              s.brand_id, b.brand_name,
               s.spec_name, 
               s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
+       LEFT JOIN product_brands b ON s.brand_id = b.id
        ORDER BY s.spec_name ASC`
     );
     
@@ -44,12 +46,14 @@ router.get("/:id", async (req, res) => {
     const [rows] = await db.query(
       `SELECT s.id, s.category_id, c.category_name, 
               s.sub_category_id, sc.subcategory_name,
+              s.brand_id, b.brand_name,
               s.spec_name, 
               s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
+       LEFT JOIN product_brands b ON s.brand_id = b.id
        WHERE s.id = ?`,
       [id]
     );
@@ -85,7 +89,7 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { 
-      category_id, sub_category_id, spec_name, product_specifications
+      category_id, sub_category_id, brand_id, spec_name, product_specifications
     } = req.body;
 
     console.log('Received data:', req.body);
@@ -102,6 +106,13 @@ router.post("/", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Subcategory is required"
+      });
+    }
+
+    if (!brand_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Brand is required"
       });
     }
 
@@ -138,16 +149,29 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Check if spec_name already exists for this category and subcategory
+    // Check if brand exists and belongs to the category and subcategory
+    const [brandExists] = await db.query(
+      "SELECT id FROM product_brands WHERE id = ? AND category_id = ? AND sub_category_id = ?",
+      [brand_id, category_id, sub_category_id]
+    );
+
+    if (brandExists.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected brand does not exist or does not belong to the selected category and subcategory"
+      });
+    }
+
+    // Check if spec_name already exists for this category, subcategory and brand
     const [existingSpec] = await db.query(
-      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ?",
-      [spec_name.trim(), category_id, sub_category_id]
+      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ? AND brand_id = ?",
+      [spec_name.trim(), category_id, sub_category_id, brand_id]
     );
 
     if (existingSpec.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "This specification already exists for the selected category and subcategory"
+        message: "This specification already exists for the selected category, subcategory and brand"
       });
     }
 
@@ -159,11 +183,12 @@ router.post("/", async (req, res) => {
     // Insert new specification
     const [result] = await db.query(
       `INSERT INTO specifications 
-       (category_id, sub_category_id, spec_name, product_specifications) 
-       VALUES (?, ?, ?, ?)`,
+       (category_id, sub_category_id, brand_id, spec_name, product_specifications) 
+       VALUES (?, ?, ?, ?, ?)`,
       [
         category_id,
         sub_category_id,
+        brand_id,
         spec_name.trim(),
         specs.length > 0 ? JSON.stringify(specs) : null
       ]
@@ -172,12 +197,14 @@ router.post("/", async (req, res) => {
     const [newSpec] = await db.query(
       `SELECT s.id, s.category_id, c.category_name, 
               s.sub_category_id, sc.subcategory_name,
+              s.brand_id, b.brand_name,
               s.spec_name, 
               s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
+       LEFT JOIN product_brands b ON s.brand_id = b.id
        WHERE s.id = ?`,
       [result.insertId]
     );
@@ -207,7 +234,7 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { 
-      category_id, sub_category_id, spec_name, product_specifications
+      category_id, sub_category_id, brand_id, spec_name, product_specifications
     } = req.body;
 
     // Validate required fields
@@ -222,6 +249,13 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Subcategory is required"
+      });
+    }
+
+    if (!brand_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Brand is required"
       });
     }
 
@@ -271,16 +305,29 @@ router.put("/:id", async (req, res) => {
       });
     }
 
+    // Check if brand exists and belongs to the category and subcategory
+    const [brandExists] = await db.query(
+      "SELECT id FROM product_brands WHERE id = ? AND category_id = ? AND sub_category_id = ?",
+      [brand_id, category_id, sub_category_id]
+    );
+
+    if (brandExists.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected brand does not exist or does not belong to the selected category and subcategory"
+      });
+    }
+
     // Check if another spec has the same name (excluding current)
     const [existingSpec] = await db.query(
-      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ? AND id != ?",
-      [spec_name.trim(), category_id, sub_category_id, id]
+      "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ? AND brand_id = ? AND id != ?",
+      [spec_name.trim(), category_id, sub_category_id, brand_id, id]
     );
 
     if (existingSpec.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "Another specification with this name already exists for the selected category and subcategory"
+        message: "Another specification with this name already exists for the selected category, subcategory and brand"
       });
     }
 
@@ -293,12 +340,14 @@ router.put("/:id", async (req, res) => {
       `UPDATE specifications SET 
         category_id = ?,
         sub_category_id = ?,
+        brand_id = ?,
         spec_name = ?,
         product_specifications = ?
        WHERE id = ?`,
       [
         category_id,
         sub_category_id,
+        brand_id,
         spec_name.trim(),
         specs.length > 0 ? JSON.stringify(specs) : null,
         id
@@ -308,12 +357,14 @@ router.put("/:id", async (req, res) => {
     const [updatedSpec] = await db.query(
       `SELECT s.id, s.category_id, c.category_name, 
               s.sub_category_id, sc.subcategory_name,
+              s.brand_id, b.brand_name,
               s.spec_name, 
               s.product_specifications,
               s.created_at, s.updated_at 
        FROM specifications s
        LEFT JOIN product_categories c ON s.category_id = c.id
        LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
+       LEFT JOIN product_brands b ON s.brand_id = b.id
        WHERE s.id = ?`,
       [id]
     );
