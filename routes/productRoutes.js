@@ -69,46 +69,6 @@ function uploadWithLogging(multerMiddleware, routeLabel) {
 }
 
 // ============================================
-// HELPER FUNCTION: Filter Specifications
-// ============================================
-async function getFilteredSpecifications(db, savedSpecs, categoryId, subCategoryId, brandName) {
-    if (!categoryId || !subCategoryId || !brandName) return savedSpecs || {};
-
-    // Get brand ID from brand name
-    const [brandRows] = await db.query(
-        "SELECT id FROM product_brands WHERE brand_name = ? LIMIT 1",
-        [brandName]
-    );
-    if (brandRows.length === 0) return savedSpecs || {};
-    const brandId = brandRows[0].id;
-
-    // Get the current specifications template
-    const [specRows] = await db.query(
-        "SELECT product_specifications FROM specifications WHERE category_id = ? AND sub_category_id = ? AND brand_id = ? LIMIT 1",
-        [categoryId, subCategoryId, brandId]
-    );
-    if (specRows.length === 0) return savedSpecs || {};
-
-    let template = specRows[0].product_specifications;
-    if (typeof template === 'string') {
-        try { template = JSON.parse(template); } 
-        catch (e) { template = []; }
-    }
-    if (!Array.isArray(template) || template.length === 0) return savedSpecs || {};
-
-    // Build filtered specifications - only keep keys that exist in the template
-    const filtered = {};
-    template.forEach(spec => {
-        const key = spec.spec_name;
-        // Keep the saved value if it exists and matches the template key, otherwise use template default
-        filtered[key] = (savedSpecs && Object.prototype.hasOwnProperty.call(savedSpecs, key))
-            ? savedSpecs[key]
-            : (spec.value || '');
-    });
-    return filtered;
-}
-
-// ============================================
 // PRODUCT CRUD OPERATIONS
 // ============================================
 
@@ -155,15 +115,6 @@ router.post(
                     specsJson = null;
                 }
             }
-
-            // Filter specifications against current template before saving
-            specsJson = await getFilteredSpecifications(
-                db,
-                specsJson || {},
-                category_id,
-                sub_category_id,
-                product_brand
-            );
 
             const sql = `
                 INSERT INTO products (
@@ -231,15 +182,6 @@ router.get("/products-with-variants", async (req, res) => {
                     product.specifications = {};
                 }
             }
-
-            // Self-heal: filter specifications against current template
-            product.specifications = await getFilteredSpecifications(
-                db,
-                product.specifications,
-                product.category_id,
-                product.sub_category_id,
-                product.product_brand
-            );
             
             const [variants] = await db.query(
                 "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
@@ -285,15 +227,6 @@ router.get("/products-with-variants/:id", async (req, res) => {
                 product.specifications = {};
             }
         }
-
-        // Self-heal: filter specifications against current template
-        product.specifications = await getFilteredSpecifications(
-            db,
-            product.specifications,
-            product.category_id,
-            product.sub_category_id,
-            product.product_brand
-        );
         
         const [variants] = await db.query(
             "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
@@ -376,15 +309,6 @@ router.put(
                     specsJson = null;
                 }
             }
-
-            // Filter specifications against current template before saving
-            specsJson = await getFilteredSpecifications(
-                db,
-                specsJson || {},
-                finalCategoryId,
-                finalSubCategoryId,
-                finalBrand
-            );
 
             const sql = `
                 UPDATE products SET
@@ -924,32 +848,31 @@ router.get("/specifications/:id", async (req, res) => {
     }
 });
 
-// GET SPECIFICATIONS BY CATEGORY, SUBCATEGORY, AND BRAND
-router.get("/specifications/category/:categoryId/subcategory/:subCategoryId/brand/:brandId", async (req, res) => {
+// GET SPECIFICATIONS BY CATEGORY AND SUBCATEGORY
+router.get("/specifications/category/:categoryId/subcategory/:subCategoryId", async (req, res) => {
     try {
         const categoryId = parseInt(req.params.categoryId, 10);
         const subCategoryId = parseInt(req.params.subCategoryId, 10);
-        const brandId = parseInt(req.params.brandId, 10);
-
-        if (isNaN(categoryId) || isNaN(subCategoryId) || isNaN(brandId)) {
-            return res.status(400).json({ success: false, error: "Invalid category, subcategory, or brand ID" });
-        }
-
+        
         const [specs] = await db.query(
-            `SELECT s.*, c.category_name, cs.subcategory_name, pb.brand_name
+            `SELECT s.*, 
+                    c.category_name,
+                    cs.subcategory_name
              FROM specifications s
              LEFT JOIN product_categories c ON s.category_id = c.id
              LEFT JOIN category_subcategories cs ON s.sub_category_id = cs.id
-             LEFT JOIN product_brands pb ON s.brand_id = pb.id
-             WHERE s.category_id = ? AND s.sub_category_id = ? AND s.brand_id = ?
-             LIMIT 1`,
-            [categoryId, subCategoryId, brandId]
+             WHERE s.category_id = ? AND s.sub_category_id = ?`,
+            [categoryId, subCategoryId]
         );
-
+        
         if (specs.length === 0) {
-            return res.json({ success: true, data: null, message: "No specifications found for this category, subcategory, and brand" });
+            return res.json({
+                success: true,
+                data: null,
+                message: "No specifications found for this category and subcategory"
+            });
         }
-
+        
         // Parse product_specifications if it's a string
         if (specs[0].product_specifications && typeof specs[0].product_specifications === 'string') {
             try {
@@ -958,8 +881,11 @@ router.get("/specifications/category/:categoryId/subcategory/:subCategoryId/bran
                 specs[0].product_specifications = [];
             }
         }
-
-        res.json({ success: true, data: specs[0] });
+        
+        res.json({
+            success: true,
+            data: specs[0]
+        });
     } catch (error) {
         console.error("Error fetching specifications:", error);
         res.status(500).json({ success: false, error: error.message });
