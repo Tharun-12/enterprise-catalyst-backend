@@ -168,14 +168,11 @@ router.get("/:userId", async (req, res) => {
                 p.product_brand,
                 p.product_details_pdf,
                 p.product_description,
+                p.extra_information,
                 p.warranty,
-                p.product_series,
-                p.product_type,
                 p.specifications,
                 p.created_at AS product_created_at,
                 p.updated_at AS product_updated_at,
-                p.min_price,
-                p.max_price,
                 p.discount,
                 cat.category_name,
                 subcat.subcategory_name
@@ -190,24 +187,20 @@ router.get("/:userId", async (req, res) => {
 
         // Get variants and parse specifications for each product
         for (const product of rows) {
-            // Get all variants for the product
+            // Get all variants for the product - only select columns that exist
             const [variants] = await db.execute(
                 `SELECT 
                     id,
                     product_id,
                     variant_name,
                     part_code,
-                    category,
-                    sub_category,
                     brand,
                     description,
-                    spec_type,
                     color,
                     size,
                     min_price,
                     max_price,
                     availability,
-                    datasheet_url,
                     image_url,
                     stock,
                     created_at,
@@ -224,12 +217,12 @@ router.get("/:userId", async (req, res) => {
                 is_selected: v.id === selectedVariantId
             }));
             
-            // If a variant is selected, use its min/max prices
+            // Set min_price and max_price from variants
             if (selectedVariantId) {
                 const selectedVariant = variants.find(v => v.id === selectedVariantId);
                 if (selectedVariant) {
-                    product.min_price = selectedVariant.min_price || product.min_price;
-                    product.max_price = selectedVariant.max_price || product.max_price;
+                    product.min_price = selectedVariant.min_price;
+                    product.max_price = selectedVariant.max_price;
                 }
             } else {
                 // If no variant selected, calculate from all variants
@@ -243,9 +236,13 @@ router.get("/:userId", async (req, res) => {
                 
                 if (minPrices.length > 0) {
                     product.min_price = Math.min(...minPrices).toString();
+                } else {
+                    product.min_price = null;
                 }
                 if (maxPrices.length > 0) {
                     product.max_price = Math.max(...maxPrices).toString();
+                } else {
+                    product.max_price = null;
                 }
             }
 
@@ -265,13 +262,12 @@ router.get("/:userId", async (req, res) => {
 
             // Extract individual spec fields for easier access in frontend
             const specFields = product.specifications || {};
-            product.spec_type = specFields['Spec Type'] || specFields['spec_type'] || 
-                               (variants.length > 0 ? variants[0].spec_type : null) || '—';
+            product.spec_type = specFields['Spec Type'] || specFields['spec_type'] || '—';
             product.bandwidth = specFields['Bandwidth'] || specFields['bandwidth'] || '—';
             product.max_data_rate = specFields['Max Data Rate'] || specFields['max_data_rate'] || '—';
             product.internal_design = specFields['Internal Design'] || specFields['internal_design'] || '—';
             product.typical_applications = specFields['Typical Applications'] || specFields['typical_applications'] || '—';
-            product.product_series = specFields['Product Series'] || specFields['product_series'] || product.product_series || '—';
+            product.product_series = specFields['Product Series'] || specFields['product_series'] || '—';
         }
 
         res.json({

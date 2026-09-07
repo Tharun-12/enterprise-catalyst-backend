@@ -100,43 +100,39 @@ router.get("/wishlist/:userId", async (req, res) => {
                 p.product_code,
                 p.product_brand,
                 p.product_details_pdf,
-                p.min_price,
-                p.max_price,
                 p.discount,
                 p.product_description,
+                p.extra_information,
                 p.warranty,
-                p.product_series,
-                p.product_type,
                 p.created_at,
                 p.updated_at,
-                c.category_name
+                p.category_id,
+                p.sub_category_id,
+                p.specifications,
+                pc.category_name
             FROM wishlist w
             INNER JOIN products p ON w.product_id = p.id
-            LEFT JOIN product_categories c ON p.product_category_id = c.id
+            LEFT JOIN product_categories pc ON p.category_id = pc.id
             WHERE w.user_id = ?
             ORDER BY w.created_at DESC`,
             [userId]
         );
 
         for (const product of rows) {
-            // Get all variants for the product
+            // Get all variants for the product - only select columns that exist
             const [variants] = await db.execute(
                 `SELECT 
                     id, 
                     product_id, 
                     variant_name,
                     part_code,
-                    category,
-                    sub_category,
                     brand,
                     description,
-                    spec_type,
                     color,
                     size,
                     min_price,
                     max_price,
                     availability,
-                    datasheet_url,
                     stock, 
                     image_url,
                     created_at,
@@ -154,12 +150,22 @@ router.get("/wishlist/:userId", async (req, res) => {
                 is_selected: v.id === selectedVariantId
             }));
             
-            // Calculate min and max based on the selected variant only
+            // Set min_price and max_price from the selected variant or calculate from all variants
             if (selectedVariantId) {
                 const selectedVariant = variants.find(v => v.id === selectedVariantId);
                 if (selectedVariant) {
                     product.min_price = selectedVariant.min_price;
                     product.max_price = selectedVariant.max_price;
+                }
+            } else {
+                // If no variant selected, use the min and max from all variants
+                if (variants.length > 0) {
+                    const prices = variants.map(v => v.min_price);
+                    product.min_price = Math.min(...prices);
+                    product.max_price = Math.max(...prices);
+                } else {
+                    product.min_price = null;
+                    product.max_price = null;
                 }
             }
         }
@@ -194,16 +200,16 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                 p.product_code,
                 p.product_brand,
                 p.product_details_pdf,
-                p.min_price,
-                p.max_price,
                 p.discount,
                 p.product_description,
+                p.extra_information,
                 p.warranty,
-                p.product_series,
-                p.product_type,
                 p.created_at AS product_created_at,
                 p.updated_at AS product_updated_at,
-                c.category_name,
+                p.category_id,
+                p.sub_category_id,
+                p.specifications,
+                pc.category_name,
                 u.id AS user_id,
                 u.name AS user_name,
                 u.mobile AS user_mobile,
@@ -211,29 +217,26 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                 u.created_at AS user_created_at
             FROM wishlist w
             INNER JOIN products p ON w.product_id = p.id
-            LEFT JOIN product_categories c ON p.product_category_id = c.id
+            LEFT JOIN product_categories pc ON p.category_id = pc.id
             INNER JOIN users u ON w.user_id = u.id
             ORDER BY w.created_at DESC`
         );
 
         for (const item of rows) {
+            // Get all variants for the product - only select columns that exist
             const [variants] = await db.execute(
                 `SELECT 
                     id, 
                     product_id, 
                     variant_name,
                     part_code,
-                    category,
-                    sub_category,
                     brand,
                     description,
-                    spec_type,
                     color,
                     size,
                     min_price,
                     max_price,
                     availability,
-                    datasheet_url,
                     stock, 
                     image_url,
                     created_at,
@@ -250,12 +253,22 @@ router.get("/wishlist/all-with-users", async (req, res) => {
                 is_selected: v.id === selectedVariantId
             }));
             
-            // Calculate min and max based on the selected variant only
+            // Set min_price and max_price from the selected variant or calculate from all variants
             if (selectedVariantId) {
                 const selectedVariant = variants.find(v => v.id === selectedVariantId);
                 if (selectedVariant) {
                     item.min_price = selectedVariant.min_price;
                     item.max_price = selectedVariant.max_price;
+                }
+            } else {
+                // If no variant selected, use the min and max from all variants
+                if (variants.length > 0) {
+                    const prices = variants.map(v => v.min_price);
+                    item.min_price = Math.min(...prices);
+                    item.max_price = Math.max(...prices);
+                } else {
+                    item.min_price = null;
+                    item.max_price = null;
                 }
             }
         }
