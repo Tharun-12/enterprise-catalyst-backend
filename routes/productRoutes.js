@@ -38,12 +38,12 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.fieldname === "images" || file.fieldname === "product_images") {
-            // FIX #7 (revised): accept ANY image format the browser reports, instead of a
-            // hardcoded whitelist. This covers AVIF, HEIC/HEIF, BMP, TIFF, SVG, and anything
+            // Accept ANY image format the browser reports, instead of a hardcoded
+            // whitelist. This covers AVIF, HEIC/HEIF, BMP, TIFF, SVG, and anything
             // else with an "image/*" mimetype, not just jpeg/png/webp/gif.
-            // Some browsers/OS send a generic "application/octet-stream" for newer formats
-            // like AVIF, so we also allow known image extensions as a fallback even when the
-            // mimetype isn't a clean "image/*" string.
+            // Some browsers/OS send a generic "application/octet-stream" for newer
+            // formats like AVIF, so we also allow known image extensions as a
+            // fallback even when the mimetype isn't a clean "image/*" string.
             const imageExtPattern = /\.(jpe?g|png|gif|webp|avif|heic|heif|bmp|tiff?|svg|ico|apng)$/i;
             const isImageMime = file.mimetype && file.mimetype.startsWith("image/");
             const hasImageExt = imageExtPattern.test(file.originalname);
@@ -450,12 +450,18 @@ router.post(
                 });
             }
 
-            // FIX #7: store EVERY uploaded image (not just the first one) as a
+            // NEW: at least one image is mandatory for every variant.
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: "At least one image is required for the variant"
+                });
+            }
+
+            // Store EVERY uploaded image (not just the first one) as a
             // JSON-encoded array in image_url.
-            const uploadedImages = req.files && req.files.length > 0
-                ? req.files.map((f) => `/uploads/products/${f.filename}`)
-                : [];
-            const imageUrlValue = uploadedImages.length > 0 ? JSON.stringify(uploadedImages) : null;
+            const uploadedImages = req.files.map((f) => `/uploads/products/${f.filename}`);
+            const imageUrlValue = JSON.stringify(uploadedImages);
 
             const insertSql = `
                 INSERT INTO product_variants (
@@ -549,6 +555,17 @@ router.put(
                 imageUrlValue = null;
             }
             // else: no new files and keep_image !== 'false' -> leave existing images untouched
+
+            // NEW: a variant must never end up with zero images. If the resulting
+            // state has no image at all (e.g. images were removed and nothing new
+            // was uploaded), reject the update instead of saving an imageless variant.
+            const remainingImages = parseStoredImages(imageUrlValue);
+            if (remainingImages.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: "At least one image is required for the variant. Please upload an image before saving."
+                });
+            }
 
             const updateSql = `
                 UPDATE product_variants SET
