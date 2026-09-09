@@ -38,9 +38,17 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.fieldname === "images" || file.fieldname === "product_images") {
-            const allowed = /jpeg|jpg|png|webp|gif/;
-            const ext = path.extname(file.originalname).toLowerCase();
-            if (allowed.test(ext) && allowed.test(file.mimetype)) {
+            // Accept ANY image format the browser reports, instead of a hardcoded
+            // whitelist. This covers AVIF, HEIC/HEIF, BMP, TIFF, SVG, and anything
+            // else with an "image/*" mimetype, not just jpeg/png/webp/gif.
+            // Some browsers/OS send a generic "application/octet-stream" for newer
+            // formats like AVIF, so we also allow known image extensions as a
+            // fallback even when the mimetype isn't a clean "image/*" string.
+            const imageExtPattern = /\.(jpe?g|png|gif|webp|avif|heic|heif|bmp|tiff?|svg|ico|apng)$/i;
+            const isImageMime = file.mimetype && file.mimetype.startsWith("image/");
+            const hasImageExt = imageExtPattern.test(file.originalname);
+
+            if (isImageMime || hasImageExt) {
                 return cb(null, true);
             }
             return cb(new Error("Only image files are allowed"));
@@ -68,44 +76,30 @@ function uploadWithLogging(multerMiddleware, routeLabel) {
     };
 }
 
-// ============================================
-// HELPER FUNCTION: Filter Specifications
-// ============================================
-async function getFilteredSpecifications(db, savedSpecs, categoryId, subCategoryId, brandName) {
-    if (!categoryId || !subCategoryId || !brandName) return savedSpecs || {};
-
-    // Get brand ID from brand name
-    const [brandRows] = await db.query(
-        "SELECT id FROM product_brands WHERE brand_name = ? LIMIT 1",
-        [brandName]
-    );
-    if (brandRows.length === 0) return savedSpecs || {};
-    const brandId = brandRows[0].id;
-
-    // Get the current specifications template
-    const [specRows] = await db.query(
-        "SELECT product_specifications FROM specifications WHERE category_id = ? AND sub_category_id = ? AND brand_id = ? LIMIT 1",
-        [categoryId, subCategoryId, brandId]
-    );
-    if (specRows.length === 0) return savedSpecs || {};
-
-    let template = specRows[0].product_specifications;
-    if (typeof template === 'string') {
-        try { template = JSON.parse(template); } 
-        catch (e) { template = []; }
+// Helper: image_url in the DB may be null, a single legacy path, or a
+// JSON-encoded array of paths (multi-image format). Always normalize to an array.
+function parseStoredImages(raw) {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [raw];
+    } catch (e) {
+        return [raw];
     }
-    if (!Array.isArray(template) || template.length === 0) return savedSpecs || {};
+}
 
-    // Build filtered specifications - only keep keys that exist in the template
-    const filtered = {};
-    template.forEach(spec => {
-        const key = spec.spec_name;
-        // Keep the saved value if it exists and matches the template key, otherwise use template default
-        filtered[key] = (savedSpecs && Object.prototype.hasOwnProperty.call(savedSpecs, key))
-            ? savedSpecs[key]
-            : (spec.value || '');
+function deleteStoredImages(raw) {
+    const images = parseStoredImages(raw);
+    images.forEach((imgPath) => {
+        const imgFilePath = path.join(productUploadDir, path.basename(imgPath));
+        try {
+            if (fs.existsSync(imgFilePath)) {
+                fs.unlinkSync(imgFilePath);
+            }
+        } catch (err) {
+            console.error("Error deleting image:", err);
+        }
     });
-    return filtered;
 }
 
 // ============================================
@@ -144,26 +138,16 @@ router.post(
                 pdfFile = req.files["product_details_pdf"][0].filename;
             }
 
-            // Parse specifications if provided as string
             let specsJson = null;
             if (specifications) {
                 try {
-                    specsJson = typeof specifications === 'string' 
-                        ? JSON.parse(specifications) 
+                    specsJson = typeof specifications === 'string'
+                        ? JSON.parse(specifications)
                         : specifications;
                 } catch (e) {
                     specsJson = null;
                 }
             }
-
-            // Filter specifications against current template before saving
-            specsJson = await getFilteredSpecifications(
-                db,
-                specsJson || {},
-                category_id,
-                sub_category_id,
-                product_brand
-            );
 
             const sql = `
                 INSERT INTO products (
@@ -211,7 +195,7 @@ router.post(
 router.get("/products-with-variants", async (req, res) => {
     try {
         const sql = `
-            SELECT p.*, 
+            SELECT p.*,
                    c.category_name,
                    cs.subcategory_name
             FROM products p
@@ -223,7 +207,6 @@ router.get("/products-with-variants", async (req, res) => {
         const [products] = await db.query(sql);
 
         for (const product of products) {
-            // Parse specifications if stored as JSON string
             if (product.specifications && typeof product.specifications === 'string') {
                 try {
                     product.specifications = JSON.parse(product.specifications);
@@ -232,15 +215,6 @@ router.get("/products-with-variants", async (req, res) => {
                 }
             }
 
-            // Self-heal: filter specifications against current template
-            product.specifications = await getFilteredSpecifications(
-                db,
-                product.specifications,
-                product.category_id,
-                product.sub_category_id,
-                product.product_brand
-            );
-            
             const [variants] = await db.query(
                 "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
                 [product.id]
@@ -260,7 +234,7 @@ router.get("/products-with-variants/:id", async (req, res) => {
     try {
         const [productResult] = await db.query(
             `
-            SELECT p.*, 
+            SELECT p.*,
                    c.category_name,
                    cs.subcategory_name
             FROM products p
@@ -276,8 +250,7 @@ router.get("/products-with-variants/:id", async (req, res) => {
         }
 
         const product = productResult[0];
-        
-        // Parse specifications if stored as JSON string
+
         if (product.specifications && typeof product.specifications === 'string') {
             try {
                 product.specifications = JSON.parse(product.specifications);
@@ -286,20 +259,13 @@ router.get("/products-with-variants/:id", async (req, res) => {
             }
         }
 
-        // Self-heal: filter specifications against current template
-        product.specifications = await getFilteredSpecifications(
-            db,
-            product.specifications,
-            product.category_id,
-            product.sub_category_id,
-            product.product_brand
-        );
-        
         const [variants] = await db.query(
             "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
             [product.id]
         );
 
+        // image_url is returned as-is (either null, a single legacy path,
+        // or a JSON array string) — the frontend normalizes it via parseImageUrls().
         product.variants = variants;
         res.json(product);
     } catch (error) {
@@ -330,7 +296,7 @@ router.put(
             } = req.body;
 
             let finalPdf = existing_pdf || "";
-            
+
             if (req.files && req.files["product_details_pdf"]) {
                 if (existing_pdf) {
                     const oldPdfPath = path.join(pdfUploadDir, existing_pdf);
@@ -349,42 +315,32 @@ router.put(
                 "SELECT product_code, category_id, sub_category_id, product_brand FROM products WHERE id = ?",
                 [req.params.id]
             );
-            
+
             if (existingProduct.length === 0) {
                 return res.status(404).json({ error: "Product not found" });
             }
 
             const finalProductCode = product_code || existingProduct[0].product_code;
-            const finalCategoryId = category_id !== undefined && category_id !== null && category_id !== '' 
-                ? category_id 
+            const finalCategoryId = category_id !== undefined && category_id !== null && category_id !== ''
+                ? category_id
                 : existingProduct[0].category_id;
-            const finalSubCategoryId = sub_category_id !== undefined && sub_category_id !== null && sub_category_id !== '' 
-                ? sub_category_id 
+            const finalSubCategoryId = sub_category_id !== undefined && sub_category_id !== null && sub_category_id !== ''
+                ? sub_category_id
                 : existingProduct[0].sub_category_id;
-            const finalBrand = product_brand !== undefined && product_brand !== null && product_brand !== '' 
-                ? product_brand 
+            const finalBrand = product_brand !== undefined && product_brand !== null && product_brand !== ''
+                ? product_brand
                 : existingProduct[0].product_brand;
 
-            // Parse specifications
             let specsJson = null;
             if (specifications) {
                 try {
-                    specsJson = typeof specifications === 'string' 
-                        ? JSON.parse(specifications) 
+                    specsJson = typeof specifications === 'string'
+                        ? JSON.parse(specifications)
                         : specifications;
                 } catch (e) {
                     specsJson = null;
                 }
             }
-
-            // Filter specifications against current template before saving
-            specsJson = await getFilteredSpecifications(
-                db,
-                specsJson || {},
-                finalCategoryId,
-                finalSubCategoryId,
-                finalBrand
-            );
 
             const sql = `
                 UPDATE products SET
@@ -428,7 +384,7 @@ router.delete("/:id", async (req, res) => {
             "SELECT product_details_pdf FROM products WHERE id = ?",
             [productId]
         );
-        
+
         if (product.length > 0 && product[0].product_details_pdf) {
             const pdfPath = path.join(pdfUploadDir, product[0].product_details_pdf);
             try {
@@ -440,9 +396,14 @@ router.delete("/:id", async (req, res) => {
             }
         }
 
+        // Clean up variant images too, since they're being cascade-deleted
+        const [productVariants] = await db.query(
+            "SELECT image_url FROM product_variants WHERE product_id = ?",
+            [productId]
+        );
+        productVariants.forEach((v) => deleteStoredImages(v.image_url));
+
         await db.query("DELETE FROM product_variants WHERE product_id = ?", [productId]);
-        // COMMENTED OUT - Spec comparison deletion not needed
-        // await db.query("DELETE FROM spec_comparison WHERE product_id = ?", [productId]);
         await db.query("DELETE FROM products WHERE id = ?", [productId]);
 
         res.json({ success: true, message: "Product deleted successfully" });
@@ -480,7 +441,7 @@ router.post(
                 brand_name
             } = req.body;
 
-            console.log("Creating variant with data:", req.body);
+            console.log("Creating variant with data:", req.body, "files:", req.files ? req.files.length : 0);
 
             if (!product_id || !variant_name || !part_code || !min_price || !max_price) {
                 return res.status(400).json({
@@ -489,9 +450,18 @@ router.post(
                 });
             }
 
-            const firstImage = req.files && req.files.length > 0
-                ? `/uploads/products/${req.files[0].filename}`
-                : null;
+            // NEW: at least one image is mandatory for every variant.
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: "At least one image is required for the variant"
+                });
+            }
+
+            // Store EVERY uploaded image (not just the first one) as a
+            // JSON-encoded array in image_url.
+            const uploadedImages = req.files.map((f) => `/uploads/products/${f.filename}`);
+            const imageUrlValue = JSON.stringify(uploadedImages);
 
             const insertSql = `
                 INSERT INTO product_variants (
@@ -514,7 +484,7 @@ router.post(
                 max_price,
                 availability || null,
                 datasheet_url || null,
-                firstImage,
+                imageUrlValue,
                 stock || 100,
                 category_id || null,
                 sub_category_id || null,
@@ -525,7 +495,7 @@ router.post(
                 success: true,
                 message: "Variant added successfully",
                 id: insertResult.insertId,
-                image_url: firstImage
+                images: uploadedImages
             });
         } catch (error) {
             console.error("Error in variant creation:", error);
@@ -560,7 +530,7 @@ router.put(
                 brand_name
             } = req.body;
 
-            console.log("Updating variant:", variantId, req.body);
+            console.log("Updating variant:", variantId, req.body, "files:", req.files ? req.files.length : 0);
 
             const [variantResult] = await db.query(
                 "SELECT * FROM product_variants WHERE id = ?",
@@ -572,22 +542,29 @@ router.put(
             }
 
             const existingVariant = variantResult[0];
-            let imageUrl = existingVariant.image_url;
+            let imageUrlValue = existingVariant.image_url;
 
             if (req.files && req.files.length > 0) {
-                if (existingVariant.image_url) {
-                    const oldImagePath = path.join(productUploadDir, path.basename(existingVariant.image_url));
-                    try {
-                        if (fs.existsSync(oldImagePath)) {
-                            fs.unlinkSync(oldImagePath);
-                        }
-                    } catch (err) {
-                        console.error("Error deleting old image:", err);
-                    }
-                }
-                imageUrl = `/uploads/products/${req.files[0].filename}`;
+                // New images were uploaded — replace the old set entirely.
+                deleteStoredImages(existingVariant.image_url);
+                const newImages = req.files.map((f) => `/uploads/products/${f.filename}`);
+                imageUrlValue = JSON.stringify(newImages);
             } else if (keep_image === 'false' || keep_image === false) {
-                imageUrl = null;
+                // User explicitly removed images and didn't upload replacements.
+                deleteStoredImages(existingVariant.image_url);
+                imageUrlValue = null;
+            }
+            // else: no new files and keep_image !== 'false' -> leave existing images untouched
+
+            // NEW: a variant must never end up with zero images. If the resulting
+            // state has no image at all (e.g. images were removed and nothing new
+            // was uploaded), reject the update instead of saving an imageless variant.
+            const remainingImages = parseStoredImages(imageUrlValue);
+            if (remainingImages.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: "At least one image is required for the variant. Please upload an image before saving."
+                });
             }
 
             const updateSql = `
@@ -623,7 +600,7 @@ router.put(
                 max_price !== undefined ? max_price : existingVariant.max_price,
                 availability !== undefined ? availability : existingVariant.availability,
                 datasheet_url !== undefined ? datasheet_url : existingVariant.datasheet_url,
-                imageUrl,
+                imageUrlValue,
                 stock !== undefined ? stock : existingVariant.stock,
                 category_id !== undefined ? category_id : existingVariant.category_id,
                 sub_category_id !== undefined ? sub_category_id : existingVariant.sub_category_id,
@@ -647,23 +624,16 @@ router.put(
 router.delete("/variants/:id", async (req, res) => {
     try {
         const variantId = parseInt(req.params.id, 10);
-        
+
         const [variant] = await db.query(
             "SELECT image_url FROM product_variants WHERE id = ?",
             [variantId]
         );
-        
+
         if (variant.length > 0 && variant[0].image_url) {
-            const imagePath = path.join(productUploadDir, path.basename(variant[0].image_url));
-            try {
-                if (fs.existsSync(imagePath)) {
-                    fs.unlinkSync(imagePath);
-                }
-            } catch (err) {
-                console.error("Error deleting variant image:", err);
-            }
+            deleteStoredImages(variant[0].image_url);
         }
-        
+
         await db.query("DELETE FROM product_variants WHERE id = ?", [variantId]);
         res.json({ success: true, message: "Variant deleted successfully" });
     } catch (error) {
@@ -673,19 +643,17 @@ router.delete("/variants/:id", async (req, res) => {
 });
 
 // GET VARIANTS BY PRODUCT
-// GET VARIANTS BY PRODUCT - Fixed
 router.get("/variants/:productId", async (req, res) => {
     try {
         const productId = parseInt(req.params.productId, 10);
-        
-        // ✅ Check if productId is a valid number
+
         if (isNaN(productId)) {
             return res.status(400).json({
                 success: false,
                 error: "Invalid product ID"
             });
         }
-        
+
         const [variants] = await db.query(
             "SELECT * FROM product_variants WHERE product_id = ? ORDER BY id",
             [productId]
@@ -698,154 +666,6 @@ router.get("/variants/:productId", async (req, res) => {
 });
 
 // ============================================
-// SPEC COMPARISON OPERATIONS - COMMENTED OUT
-// ============================================
-
-// CREATE/UPDATE SPEC COMPARISON - COMMENTED OUT
-// router.post("/spec-comparison", async (req, res) => {
-//     try {
-//         const {
-//             product_id,
-//             spec_type,
-//             bandwidth,
-//             max_data_rate,
-//             internal_design,
-//             typical_applications
-//         } = req.body;
-
-//         console.log("Saving spec comparison:", req.body);
-
-//         if (!spec_type || spec_type.trim() === '') {
-//             return res.status(400).json({
-//                 success: false,
-//                 error: "Spec type is required"
-//             });
-//         }
-
-//         const cleanSpecType = spec_type.trim();
-
-//         const [existing] = await db.query(
-//             "SELECT id FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
-//             [product_id, cleanSpecType]
-//         );
-
-//         let result;
-//         if (existing.length > 0) {
-//             [result] = await db.query(
-//                 `UPDATE spec_comparison SET
-//                     bandwidth = ?,
-//                     max_data_rate = ?,
-//                     internal_design = ?,
-//                     typical_applications = ?
-//                 WHERE product_id = ? AND spec_type = ?`,
-//                 [
-//                     bandwidth || null,
-//                     max_data_rate || null,
-//                     internal_design || null,
-//                     typical_applications || null,
-//                     product_id,
-//                     cleanSpecType
-//                 ]
-//             );
-//         } else {
-//             [result] = await db.query(
-//                 `INSERT INTO spec_comparison
-//                     (product_id, spec_type, bandwidth, max_data_rate, internal_design, typical_applications)
-//                  VALUES (?, ?, ?, ?, ?, ?)`,
-//                 [
-//                     product_id,
-//                     cleanSpecType,
-//                     bandwidth || null,
-//                     max_data_rate || null,
-//                     internal_design || null,
-//                     typical_applications || null
-//                 ]
-//             );
-//         }
-
-//         res.json({
-//             success: true,
-//             message: "Spec comparison saved successfully",
-//             id: result.insertId || existing[0]?.id
-//         });
-//     } catch (error) {
-//         console.error("Error saving spec comparison:", error);
-//         if (error.code === 'ER_DUP_ENTRY') {
-//             return res.status(400).json({
-//                 success: false,
-//                 error: "A spec comparison for this product and spec type already exists. Please update the existing one instead."
-//             });
-//         }
-//         res.status(500).json({
-//             success: false,
-//             error: error.message
-//         });
-//     }
-// });
-
-// GET SPEC COMPARISONS BY PRODUCT - COMMENTED OUT
-// router.get("/spec-comparison/:productId", async (req, res) => {
-//     try {
-//         const productId = parseInt(req.params.productId, 10);
-        
-//         if (isNaN(productId)) {
-//             return res.status(400).json({
-//                 success: false,
-//                 error: "Invalid product ID"
-//             });
-//         }
-        
-//         const [comparisons] = await db.query(
-//             "SELECT * FROM spec_comparison WHERE product_id = ?",
-//             [productId]
-//         );
-
-//         const result = {};
-//         comparisons.forEach(item => {
-//             result[item.spec_type] = item;
-//         });
-
-//         res.json(result);
-//     } catch (error) {
-//         console.error("Error fetching spec comparisons:", error);
-//         res.status(500).json(error);
-//     }
-// });
-
-// DELETE SPEC COMPARISON - COMMENTED OUT
-// router.delete("/spec-comparison/:productId/:specType", async (req, res) => {
-//     try {
-//         const productId = parseInt(req.params.productId, 10);
-//         const { specType } = req.params;
-//         const decodedSpecType = decodeURIComponent(specType);
-        
-//         await db.query(
-//             "DELETE FROM spec_comparison WHERE product_id = ? AND spec_type = ?",
-//             [productId, decodedSpecType]
-//         );
-//         res.json({ success: true, message: "Spec comparison deleted successfully" });
-//     } catch (error) {
-//         console.error("Error deleting spec comparison:", error);
-//         res.status(500).json(error);
-//     }
-// });
-
-// DELETE ALL SPEC COMPARISONS FOR A PRODUCT - COMMENTED OUT
-// router.delete("/spec-comparison/:productId/all", async (req, res) => {
-//     try {
-//         const productId = parseInt(req.params.productId, 10);
-//         await db.query(
-//             "DELETE FROM spec_comparison WHERE product_id = ?",
-//             [productId]
-//         );
-//         res.json({ success: true, message: "All spec comparisons deleted successfully" });
-//     } catch (error) {
-//         console.error("Error deleting spec comparisons:", error);
-//         res.status(500).json(error);
-//     }
-// });
-
-// ============================================
 // SPECIFICATIONS OPERATIONS
 // ============================================
 
@@ -853,15 +673,14 @@ router.get("/variants/:productId", async (req, res) => {
 router.get("/specifications", async (req, res) => {
     try {
         const [specs] = await db.query(
-            `SELECT s.*, 
+            `SELECT s.*,
                     c.category_name,
                     cs.subcategory_name
              FROM specifications s
              LEFT JOIN product_categories c ON s.category_id = c.id
              LEFT JOIN category_subcategories cs ON s.sub_category_id = cs.id`
         );
-        
-        // Parse product_specifications for each record
+
         for (const spec of specs) {
             if (spec.product_specifications && typeof spec.product_specifications === 'string') {
                 try {
@@ -871,7 +690,7 @@ router.get("/specifications", async (req, res) => {
                 }
             }
         }
-        
+
         res.json({
             success: true,
             data: specs
@@ -886,9 +705,9 @@ router.get("/specifications", async (req, res) => {
 router.get("/specifications/:id", async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
-        
+
         const [specs] = await db.query(
-            `SELECT s.*, 
+            `SELECT s.*,
                     c.category_name,
                     cs.subcategory_name
              FROM specifications s
@@ -897,15 +716,14 @@ router.get("/specifications/:id", async (req, res) => {
              WHERE s.id = ?`,
             [id]
         );
-        
+
         if (specs.length === 0) {
             return res.status(404).json({
                 success: false,
                 error: "Specification not found"
             });
         }
-        
-        // Parse product_specifications if it's a string
+
         if (specs[0].product_specifications && typeof specs[0].product_specifications === 'string') {
             try {
                 specs[0].product_specifications = JSON.parse(specs[0].product_specifications);
@@ -913,7 +731,7 @@ router.get("/specifications/:id", async (req, res) => {
                 specs[0].product_specifications = [];
             }
         }
-        
+
         res.json({
             success: true,
             data: specs[0]
@@ -924,33 +742,31 @@ router.get("/specifications/:id", async (req, res) => {
     }
 });
 
-// GET SPECIFICATIONS BY CATEGORY, SUBCATEGORY, AND BRAND
-router.get("/specifications/category/:categoryId/subcategory/:subCategoryId/brand/:brandId", async (req, res) => {
+// GET SPECIFICATIONS BY CATEGORY AND SUBCATEGORY
+router.get("/specifications/category/:categoryId/subcategory/:subCategoryId", async (req, res) => {
     try {
         const categoryId = parseInt(req.params.categoryId, 10);
         const subCategoryId = parseInt(req.params.subCategoryId, 10);
-        const brandId = parseInt(req.params.brandId, 10);
-
-        if (isNaN(categoryId) || isNaN(subCategoryId) || isNaN(brandId)) {
-            return res.status(400).json({ success: false, error: "Invalid category, subcategory, or brand ID" });
-        }
 
         const [specs] = await db.query(
-            `SELECT s.*, c.category_name, cs.subcategory_name, pb.brand_name
+            `SELECT s.*,
+                    c.category_name,
+                    cs.subcategory_name
              FROM specifications s
              LEFT JOIN product_categories c ON s.category_id = c.id
              LEFT JOIN category_subcategories cs ON s.sub_category_id = cs.id
-             LEFT JOIN product_brands pb ON s.brand_id = pb.id
-             WHERE s.category_id = ? AND s.sub_category_id = ? AND s.brand_id = ?
-             LIMIT 1`,
-            [categoryId, subCategoryId, brandId]
+             WHERE s.category_id = ? AND s.sub_category_id = ?`,
+            [categoryId, subCategoryId]
         );
 
         if (specs.length === 0) {
-            return res.json({ success: true, data: null, message: "No specifications found for this category, subcategory, and brand" });
+            return res.json({
+                success: true,
+                data: null,
+                message: "No specifications found for this category and subcategory"
+            });
         }
 
-        // Parse product_specifications if it's a string
         if (specs[0].product_specifications && typeof specs[0].product_specifications === 'string') {
             try {
                 specs[0].product_specifications = JSON.parse(specs[0].product_specifications);
@@ -959,7 +775,10 @@ router.get("/specifications/category/:categoryId/subcategory/:subCategoryId/bran
             }
         }
 
-        res.json({ success: true, data: specs[0] });
+        res.json({
+            success: true,
+            data: specs[0]
+        });
     } catch (error) {
         console.error("Error fetching specifications:", error);
         res.status(500).json({ success: false, error: error.message });
