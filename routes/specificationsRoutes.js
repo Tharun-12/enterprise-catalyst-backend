@@ -2,6 +2,64 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const path = require("path");
+const fs = require("fs");
+
+/* =========================================================
+   CASCADE-DELETE HELPERS
+========================================================= */
+
+function parseStoredImages(raw) {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [raw];
+    } catch (e) {
+        return [raw];
+    }
+}
+
+function deleteFileIfExists(filePath) {
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+    } catch (err) {
+        console.error("Error deleting file:", filePath, err);
+    }
+}
+
+// Deletes every product (and its variants/images/PDFs) under this category + subcategory,
+// since that's the only link a specification has to products.
+async function deleteProductsByCategoryAndSubCategory(categoryId, subCategoryId) {
+    const [products] = await db.query(
+        "SELECT id, product_details_pdf FROM products WHERE category_id = ? AND sub_category_id = ?",
+        [categoryId, subCategoryId]
+    );
+    const productIds = products.map(p => p.id);
+    if (productIds.length === 0) return;
+
+    const [variants] = await db.query(
+        "SELECT id, image_url FROM product_variants WHERE product_id IN (?)",
+        [productIds]
+    );
+
+    for (const variant of variants) {
+        parseStoredImages(variant.image_url).forEach(imgPath => {
+            deleteFileIfExists(path.join(__dirname, '../uploads/products', path.basename(imgPath)));
+        });
+    }
+
+    await db.query("DELETE FROM product_variants WHERE product_id IN (?)", [productIds]);
+
+    products.forEach(p => {
+        if (p.product_details_pdf) {
+            deleteFileIfExists(path.join(__dirname, '../uploads/pdfs', p.product_details_pdf));
+        }
+    });
+
+    await db.query("DELETE FROM products WHERE id IN (?)", [productIds]);
+}
 
 // Get all specifications with category info
 router.get("/", async (req, res) => {
@@ -17,12 +75,12 @@ router.get("/", async (req, res) => {
        LEFT JOIN category_subcategories sc ON s.sub_category_id = sc.id
        ORDER BY s.spec_name ASC`
     );
-    
+
     const parsedRows = rows.map(row => ({
       ...row,
       product_specifications: row.product_specifications ? JSON.parse(row.product_specifications) : []
     }));
-    
+
     res.json({
       success: true,
       data: parsedRows
@@ -84,13 +142,10 @@ router.get("/:id", async (req, res) => {
 // Create a new specification
 router.post("/", async (req, res) => {
   try {
-    const { 
-      category_id, sub_category_id, spec_name, product_specifications
-    } = req.body;
+    const { category_id, sub_category_id, spec_name, product_specifications } = req.body;
 
     console.log('Received data:', req.body);
 
-    // Validate required fields
     if (!category_id) {
       return res.status(400).json({
         success: false,
@@ -112,7 +167,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Check if category exists
     const [categoryExists] = await db.query(
       "SELECT id FROM product_categories WHERE id = ?",
       [category_id]
@@ -125,7 +179,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Check if subcategory exists and belongs to the category
     const [subCategoryExists] = await db.query(
       "SELECT id FROM category_subcategories WHERE id = ? AND category_id = ?",
       [sub_category_id, category_id]
@@ -138,7 +191,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Check if spec_name already exists for this category and subcategory
     const [existingSpec] = await db.query(
       "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ?",
       [spec_name.trim(), category_id, sub_category_id]
@@ -151,12 +203,9 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Prepare product specifications
     let specs = product_specifications || [];
-    // Remove empty specifications
     specs = specs.filter(spec => spec.spec_name && spec.spec_name.trim() && spec.value && spec.value.trim());
 
-    // Insert new specification
     const [result] = await db.query(
       `INSERT INTO specifications 
        (category_id, sub_category_id, spec_name, product_specifications) 
@@ -206,11 +255,8 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      category_id, sub_category_id, spec_name, product_specifications
-    } = req.body;
+    const { category_id, sub_category_id, spec_name, product_specifications } = req.body;
 
-    // Validate required fields
     if (!category_id) {
       return res.status(400).json({
         success: false,
@@ -232,7 +278,6 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Check if specification exists
     const [spec] = await db.query(
       "SELECT id FROM specifications WHERE id = ?",
       [id]
@@ -245,7 +290,6 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Check if category exists
     const [categoryExists] = await db.query(
       "SELECT id FROM product_categories WHERE id = ?",
       [category_id]
@@ -258,7 +302,6 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Check if subcategory exists and belongs to the category
     const [subCategoryExists] = await db.query(
       "SELECT id FROM category_subcategories WHERE id = ? AND category_id = ?",
       [sub_category_id, category_id]
@@ -271,7 +314,6 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Check if another spec has the same name (excluding current)
     const [existingSpec] = await db.query(
       "SELECT id FROM specifications WHERE spec_name = ? AND category_id = ? AND sub_category_id = ? AND id != ?",
       [spec_name.trim(), category_id, sub_category_id, id]
@@ -284,11 +326,9 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // Prepare product specifications
     let specs = product_specifications || [];
     specs = specs.filter(spec => spec.spec_name && spec.spec_name.trim() && spec.value && spec.value.trim());
 
-    // Update specification
     await db.query(
       `UPDATE specifications SET 
         category_id = ?,
@@ -338,40 +378,45 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete a specification
+// Delete a specification AND every product under its category + subcategory
+// (plus their variants/images/PDFs).
 router.delete("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
+    try {
+        const { id } = req.params;
 
-    const [spec] = await db.query(
-      "SELECT id, spec_name FROM specifications WHERE id = ?",
-      [id]
-    );
+        const [spec] = await db.query(
+            "SELECT id, spec_name, category_id, sub_category_id FROM specifications WHERE id = ?",
+            [id]
+        );
 
-    if (spec.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Specification not found"
-      });
+        if (spec.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Specification not found"
+            });
+        }
+
+        await db.query('START TRANSACTION');
+
+        await deleteProductsByCategoryAndSubCategory(spec[0].category_id, spec[0].sub_category_id);
+
+        await db.query("DELETE FROM specifications WHERE id = ?", [id]);
+
+        await db.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: `Specification "${spec[0].spec_name}" and all related products deleted successfully`
+        });
+    } catch (error) {
+        await db.query('ROLLBACK');
+        console.error("Error deleting specification:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete specification",
+            error: error.message
+        });
     }
-
-    await db.query(
-      "DELETE FROM specifications WHERE id = ?",
-      [id]
-    );
-
-    res.json({
-      success: true,
-      message: `Specification "${spec[0].spec_name}" deleted successfully`
-    });
-  } catch (error) {
-    console.error("Error deleting specification:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete specification",
-      error: error.message
-    });
-  }
 });
 
 module.exports = router;
