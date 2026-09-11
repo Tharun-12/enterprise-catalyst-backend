@@ -25,7 +25,7 @@ const fileFilter = (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = allowedTypes.test(file.mimetype);
-    
+
     if (mimetype && extname) {
         return cb(null, true);
     } else {
@@ -39,7 +39,32 @@ const upload = multer({
     fileFilter: fileFilter
 });
 
-// Get all categories with subcategories
+/* =========================================================
+   CASCADE-DELETE HELPERS
+========================================================= */
+
+// Normalize image_url (null | single path | JSON array) into an array
+function parseStoredImages(raw) {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [raw];
+    } catch (e) {
+        return [raw];
+    }
+}
+
+function deleteFileIfExists(filePath) {
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+    } catch (err) {
+        console.error("Error deleting file:", filePath, err);
+    }
+}
+
+// Get all specifications with category info
 router.get("/", async (req, res) => {
     try {
         const [rows] = await db.query(
@@ -48,7 +73,6 @@ router.get("/", async (req, res) => {
              ORDER BY category_name ASC`
         );
 
-        // Get subcategories for each category
         for (let category of rows) {
             const [subcategories] = await db.query(
                 "SELECT id, subcategory_name, created_at FROM category_subcategories WHERE category_id = ?",
@@ -75,7 +99,7 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         const [rows] = await db.query(
             "SELECT id, category_name, description, category_image, created_at, updated_at FROM product_categories WHERE id = ?",
             [id]
@@ -88,7 +112,6 @@ router.get("/:id", async (req, res) => {
             });
         }
 
-        // Get subcategories
         const [subcategories] = await db.query(
             "SELECT id, subcategory_name, created_at FROM category_subcategories WHERE category_id = ?",
             [id]
@@ -117,7 +140,6 @@ router.post("/", upload.single('category_image'), async (req, res) => {
         const { category_name, description, subcategories } = req.body;
         const category_image = req.file ? req.file.filename : null;
 
-        // Validate required fields
         if (!category_name || !category_name.trim()) {
             return res.status(400).json({
                 success: false,
@@ -125,7 +147,6 @@ router.post("/", upload.single('category_image'), async (req, res) => {
             });
         }
 
-        // Check if category with same name exists
         const [existing] = await db.query(
             "SELECT id FROM product_categories WHERE category_name = ?",
             [category_name.trim()]
@@ -138,10 +159,8 @@ router.post("/", upload.single('category_image'), async (req, res) => {
             });
         }
 
-        // Start transaction
         await db.query('START TRANSACTION');
 
-        // Insert category
         const [result] = await db.query(
             "INSERT INTO product_categories (category_name, description, category_image) VALUES (?, ?, ?)",
             [category_name.trim(), description || null, category_image]
@@ -149,7 +168,6 @@ router.post("/", upload.single('category_image'), async (req, res) => {
 
         const categoryId = result.insertId;
 
-        // Insert subcategories
         let subcategoryList = [];
         if (subcategories) {
             try {
@@ -167,7 +185,7 @@ router.post("/", upload.single('category_image'), async (req, res) => {
             const subcategoryValues = subcategoryList
                 .filter(s => s && s.trim())
                 .map(s => [categoryId, s.trim()]);
-            
+
             if (subcategoryValues.length > 0) {
                 await db.query(
                     "INSERT INTO category_subcategories (category_id, subcategory_name) VALUES ?",
@@ -178,7 +196,6 @@ router.post("/", upload.single('category_image'), async (req, res) => {
 
         await db.query('COMMIT');
 
-        // Get the newly created category with subcategories
         const [newCategory] = await db.query(
             "SELECT id, category_name, description, category_image, created_at, updated_at FROM product_categories WHERE id = ?",
             [categoryId]
@@ -214,7 +231,6 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
         const { category_name, description, subcategories, delete_image } = req.body;
         const category_image = req.file ? req.file.filename : null;
 
-        // Validate required fields
         if (!category_name || !category_name.trim()) {
             return res.status(400).json({
                 success: false,
@@ -222,7 +238,6 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
             });
         }
 
-        // Check if category exists
         const [category] = await db.query(
             "SELECT id, category_image FROM product_categories WHERE id = ?",
             [id]
@@ -235,7 +250,6 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
             });
         }
 
-        // Check if another category has the same name
         const [existing] = await db.query(
             "SELECT id FROM product_categories WHERE category_name = ? AND id != ?",
             [category_name.trim(), id]
@@ -248,40 +262,29 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
             });
         }
 
-        // Handle image deletion
         let finalImage = category[0].category_image;
         if (delete_image === 'true') {
             if (category[0].category_image) {
-                const oldImagePath = path.join(__dirname, '../uploads/categories', category[0].category_image);
-                if (fs.existsSync(oldImagePath)) {
-                    fs.unlinkSync(oldImagePath);
-                }
+                deleteFileIfExists(path.join(__dirname, '../uploads/categories', category[0].category_image));
             }
             finalImage = null;
         }
         if (category_image) {
             if (category[0].category_image) {
-                const oldImagePath = path.join(__dirname, '../uploads/categories', category[0].category_image);
-                if (fs.existsSync(oldImagePath)) {
-                    fs.unlinkSync(oldImagePath);
-                }
+                deleteFileIfExists(path.join(__dirname, '../uploads/categories', category[0].category_image));
             }
             finalImage = category_image;
         }
 
-        // Start transaction
         await db.query('START TRANSACTION');
 
-        // Update category
         await db.query(
             "UPDATE product_categories SET category_name = ?, description = ?, category_image = ? WHERE id = ?",
             [category_name.trim(), description || null, finalImage, id]
         );
 
-        // Update subcategories - Delete existing
         await db.query("DELETE FROM category_subcategories WHERE category_id = ?", [id]);
 
-        // Insert new subcategories
         let subcategoryList = [];
         if (subcategories) {
             try {
@@ -299,7 +302,7 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
             const subcategoryValues = subcategoryList
                 .filter(s => s && s.trim())
                 .map(s => [id, s.trim()]);
-            
+
             if (subcategoryValues.length > 0) {
                 await db.query(
                     "INSERT INTO category_subcategories (category_id, subcategory_name) VALUES ?",
@@ -310,7 +313,6 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
 
         await db.query('COMMIT');
 
-        // Get the updated category
         const [updatedCategory] = await db.query(
             "SELECT id, category_name, description, category_image, created_at, updated_at FROM product_categories WHERE id = ?",
             [id]
@@ -339,12 +341,12 @@ router.put("/:id", upload.single('category_image'), async (req, res) => {
     }
 });
 
-// Delete a category
+// Delete a category AND everything that depends on it
+// (brands, specifications, products, product variants, and their files)
 router.delete("/:id", async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Check if category exists
         const [category] = await db.query(
             "SELECT id, category_name, category_image FROM product_categories WHERE id = ?",
             [id]
@@ -357,28 +359,64 @@ router.delete("/:id", async (req, res) => {
             });
         }
 
-        // Start transaction
         await db.query('START TRANSACTION');
 
-        // Delete subcategories (will be automatically deleted due to ON DELETE CASCADE)
-        await db.query("DELETE FROM category_subcategories WHERE category_id = ?", [id]);
+        // 1) Find all products under this category
+        const [products] = await db.query(
+            "SELECT id, product_details_pdf FROM products WHERE category_id = ?",
+            [id]
+        );
+        const productIds = products.map(p => p.id);
 
-        // Delete category image if exists
-        if (category[0].category_image) {
-            const imagePath = path.join(__dirname, '../uploads/categories', category[0].category_image);
-            if (fs.existsSync(imagePath)) {
-                fs.unlinkSync(imagePath);
+        if (productIds.length > 0) {
+            // 1a) Delete variant image files from disk
+            const [variants] = await db.query(
+                "SELECT id, image_url FROM product_variants WHERE product_id IN (?)",
+                [productIds]
+            );
+
+            for (const variant of variants) {
+                parseStoredImages(variant.image_url).forEach(imgPath => {
+                    deleteFileIfExists(path.join(__dirname, '../uploads/products', path.basename(imgPath)));
+                });
             }
+
+            // 1b) Delete the variants themselves
+            await db.query("DELETE FROM product_variants WHERE product_id IN (?)", [productIds]);
+
+            // 1c) Delete product PDF files from disk
+            products.forEach(p => {
+                if (p.product_details_pdf) {
+                    deleteFileIfExists(path.join(__dirname, '../uploads/pdfs', p.product_details_pdf));
+                }
+            });
+
+            // 1d) Delete the products themselves
+            await db.query("DELETE FROM products WHERE id IN (?)", [productIds]);
         }
 
-        // Delete category
+        // 2) Delete specifications tied to this category
+        await db.query("DELETE FROM specifications WHERE category_id = ?", [id]);
+
+        // 3) Delete brands tied to this category
+        await db.query("DELETE FROM product_brands WHERE category_id = ?", [id]);
+
+        // 4) Delete subcategories tied to this category
+        await db.query("DELETE FROM category_subcategories WHERE category_id = ?", [id]);
+
+        // 5) Delete category image from disk
+        if (category[0].category_image) {
+            deleteFileIfExists(path.join(__dirname, '../uploads/categories', category[0].category_image));
+        }
+
+        // 6) Finally delete the category itself
         await db.query("DELETE FROM product_categories WHERE id = ?", [id]);
 
         await db.query('COMMIT');
 
         res.json({
             success: true,
-            message: `Category "${category[0].category_name}" deleted successfully`
+            message: `Category "${category[0].category_name}" and all related brands, specifications, and products deleted successfully`
         });
     } catch (error) {
         await db.query('ROLLBACK');
