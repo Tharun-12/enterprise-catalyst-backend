@@ -85,106 +85,6 @@ router.post("/wishlist", async (req, res) => {
 });
 
 // ========================================
-// Get User Wishlist with selected variants
-// ========================================
-router.get("/wishlist/:userId", async (req, res) => {
-    try {
-        const { userId } = req.params;
-
-        const [rows] = await db.execute(
-            `SELECT
-                w.id AS wishlist_id,
-                w.variant_id AS selected_variant_id,
-                p.id,
-                p.product_name,
-                p.product_code,
-                p.product_brand,
-                p.product_details_pdf,
-                p.discount,
-                p.product_description,
-                p.extra_information,
-                p.warranty,
-                p.created_at,
-                p.updated_at,
-                p.category_id,
-                p.sub_category_id,
-                p.specifications,
-                pc.category_name
-            FROM wishlist w
-            INNER JOIN products p ON w.product_id = p.id
-            LEFT JOIN product_categories pc ON p.category_id = pc.id
-            WHERE w.user_id = ?
-            ORDER BY w.created_at DESC`,
-            [userId]
-        );
-
-        for (const product of rows) {
-            // Get all variants for the product - only select columns that exist
-            const [variants] = await db.execute(
-                `SELECT 
-                    id, 
-                    product_id, 
-                    variant_name,
-                    part_code,
-                    brand,
-                    description,
-                    color,
-                    size,
-                    min_price,
-                    max_price,
-                    availability,
-                    stock, 
-                    image_url,
-                    created_at,
-                    updated_at
-                FROM product_variants 
-                WHERE product_id = ?
-                ORDER BY id`,
-                [product.id]
-            );
-            
-            // Mark which variant is selected
-            const selectedVariantId = product.selected_variant_id;
-            product.variants = variants.map(v => ({
-                ...v,
-                is_selected: v.id === selectedVariantId
-            }));
-            
-            // Set min_price and max_price from the selected variant or calculate from all variants
-            if (selectedVariantId) {
-                const selectedVariant = variants.find(v => v.id === selectedVariantId);
-                if (selectedVariant) {
-                    product.min_price = selectedVariant.min_price;
-                    product.max_price = selectedVariant.max_price;
-                }
-            } else {
-                // If no variant selected, use the min and max from all variants
-                if (variants.length > 0) {
-                    const prices = variants.map(v => v.min_price);
-                    product.min_price = Math.min(...prices);
-                    product.max_price = Math.max(...prices);
-                } else {
-                    product.min_price = null;
-                    product.max_price = null;
-                }
-            }
-        }
-
-        res.json({
-            success: true,
-            data: rows
-        });
-
-    } catch (err) {
-        console.error('Error fetching wishlist:', err);
-        res.status(500).json({
-            success: false,
-            message: err.message
-        });
-    }
-});
-
-// ========================================
 // Get All Wishlist Items with User Details
 // ========================================
 router.get("/wishlist/all-with-users", async (req, res) => {
@@ -305,6 +205,107 @@ router.get("/wishlist/all-with-users", async (req, res) => {
 
     } catch (err) {
         console.error('Error fetching wishlist with users:', err);
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+});
+
+
+// ========================================
+// Get User Wishlist with selected variants
+// ========================================
+router.get("/wishlist/:userId", async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        const [rows] = await db.execute(
+            `SELECT
+                w.id AS wishlist_id,
+                w.variant_id AS selected_variant_id,
+                p.id,
+                p.product_name,
+                p.product_code,
+                p.product_brand,
+                p.product_details_pdf,
+                p.discount,
+                p.product_description,
+                p.extra_information,
+                p.warranty,
+                p.created_at,
+                p.updated_at,
+                p.category_id,
+                p.sub_category_id,
+                p.specifications,
+                pc.category_name
+            FROM wishlist w
+            INNER JOIN products p ON w.product_id = p.id
+            LEFT JOIN product_categories pc ON p.category_id = pc.id
+            WHERE w.user_id = ?
+            ORDER BY w.created_at DESC`,
+            [userId]
+        );
+
+        for (const product of rows) {
+            // Get all variants for the product - only select columns that exist
+            const [variants] = await db.execute(
+                `SELECT 
+                    id, 
+                    product_id, 
+                    variant_name,
+                    part_code,
+                    brand,
+                    description,
+                    color,
+                    size,
+                    min_price,
+                    max_price,
+                    availability,
+                    stock, 
+                    image_url,
+                    created_at,
+                    updated_at
+                FROM product_variants 
+                WHERE product_id = ?
+                ORDER BY id`,
+                [product.id]
+            );
+            
+            // Mark which variant is selected
+            const selectedVariantId = product.selected_variant_id;
+            product.variants = variants.map(v => ({
+                ...v,
+                is_selected: v.id === selectedVariantId
+            }));
+            
+            // Set min_price and max_price from the selected variant or calculate from all variants
+            if (selectedVariantId) {
+                const selectedVariant = variants.find(v => v.id === selectedVariantId);
+                if (selectedVariant) {
+                    product.min_price = selectedVariant.min_price;
+                    product.max_price = selectedVariant.max_price;
+                }
+            } else {
+                // If no variant selected, use the min and max from all variants
+                if (variants.length > 0) {
+                    const prices = variants.map(v => v.min_price);
+                    product.min_price = Math.min(...prices);
+                    product.max_price = Math.max(...prices);
+                } else {
+                    product.min_price = null;
+                    product.max_price = null;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            data: rows
+        });
+
+    } catch (err) {
+        console.error('Error fetching wishlist:', err);
         res.status(500).json({
             success: false,
             message: err.message
